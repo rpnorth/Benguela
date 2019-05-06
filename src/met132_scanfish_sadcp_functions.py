@@ -153,7 +153,7 @@ def gridding_scanfish_data(scanfish_data,varname='CT',dt='950400000ns',dx=None,d
     
     return XI*d_factor, YI, TI, CT_grid, scanfish_correct
 
-def load_combine_sadcp_scanfish_data(fileLADCP, pathScan, grid_dx = 750, grid_dz = 10):
+def load_combine_sadcp_scanfish_data(fileSADCP, pathScan, grid_dx = 750, grid_dz = 10):
     import os
     import glob
     import gsw
@@ -164,7 +164,7 @@ def load_combine_sadcp_scanfish_data(fileLADCP, pathScan, grid_dx = 750, grid_dz
     #from scanfish_sadcp_functions import load_process_scanfish_data
     
     # load SADCP data
-    sadcp = xr.open_dataset(fileLADCP)
+    sadcp = xr.open_dataset(fileSADCP)
     sadcp['distance'] =  xr.DataArray(np.append(np.array(0),gsw.distance(sadcp.lon, sadcp.lat,p=0)),dims='time')
 
     # load Scanfish data
@@ -196,7 +196,7 @@ def load_combine_sadcp_scanfish_data(fileLADCP, pathScan, grid_dx = 750, grid_dz
                                                             scanfish_data[1].time.values <= sadcp.time.sel(time=np.datetime64('2016-11-20T04:30:00'),method='nearest').values),
                                              scanfish_data[1].time.values >= sadcp.time.sel(time=np.datetime64('2016-11-19T13:30:00'), method='nearest').values)
 
-    scanfish_gridded_section, scanfish_data_section, scan_sadcp= list((1,1)),list((1,1)),list((1,1))
+    scanfish_gridded_section, scanfish_data_section, scan_sadcp, sadcp_out= list((1,1)),list((1,1)),list((1,1)), list((1,1))
     for ri in range(len(ind_scanfish_section)):
         
         # create gridded scanfish data for selected sections
@@ -207,6 +207,7 @@ def load_combine_sadcp_scanfish_data(fileLADCP, pathScan, grid_dx = 750, grid_dz
         sadcp_test = sadcp.isel(time=ind_SADCP_section[ri])
         sadcp_test['z'] = -1*sadcp_test.depth[0,:]
         sadcp_test = sadcp_test.swap_dims({'depth_cell': 'z'})
+        sadcp_out[ri] = sadcp_test # for output
         sadcp_test = sadcp_test.resample(time='300000000000ns').mean('time')
 
         scan_test = scanfish_gridded_section[ri]
@@ -220,28 +221,82 @@ def load_combine_sadcp_scanfish_data(fileLADCP, pathScan, grid_dx = 750, grid_dz
         scan_sadcp[ri] = scan_sadcp[ri].assign_coords(Pressure=scan_sadcp[ri].z) # to get right dims
         scan_sadcp[ri].Pressure.values = gsw.p_from_z(scan_sadcp[ri].z,scan_sadcp[ri].lat.mean())
         
-        # calculate Vorticity, M**2, N**2, and Ri_Balanced
-        scan_sadcp[ri]['across_track_vel'] = scan_sadcp[ri].u #(scan_sadcp[ri].u**2+scan_sadcp[ri].v**2)**0.5
+        # get distance from lat lon positions
+        # a bit backwards, but because of distance_scaled etc., waiting until new distance calc to swap time and distance variables
         scan_sadcp[ri].distance.values = np.cumsum(np.trunc(np.append(np.array(0),gsw.distance(scan_sadcp[ri].lon.dropna(dim='time').values,  
                                                                                                scan_sadcp[ri].lat.dropna(dim='time').values,p=0))))
+
+        # a more universal variable name as a coordinate
+        #scan_sadcp[ri] = scan_sadcp[ri].swap_dims({'time': 'distance'}).rename({'distance': 'x_m'})
+        scan_sadcp[ri] = scan_sadcp[ri].rename({'distance': 'x_m'})
+        scan_sadcp[ri] = scan_sadcp[ri].set_coords('x_m')
         
-        # for plotting better if there is a coord option
-        scan_sadcp[ri] = scan_sadcp[ri].assign_coords(x_km=scan_sadcp[ri].distance/1000)
-        scan_sadcp[ri] = scan_sadcp[ri].assign_coords(x_m=scan_sadcp[ri].distance)
+        # add lat lon as coords
+        scan_sadcp[ri] = scan_sadcp[ri].assign_coords(lon=scan_sadcp[ri].lon)
+        scan_sadcp[ri] = scan_sadcp[ri].assign_coords(lat=scan_sadcp[ri].lat)
+        
         #dx = scan_sadcp[ri].x_km.diff('time').mean().values
         #scan_sadcp[ri] = scan_sadcp[ri].assign_coords(x_km_shift=scan_sadcp[ri].x_km) # for contour plot on pcolormesh
         #dz = scan_sadcp[ri].z.diff('z').mean().values
         #scan_sadcp[ri] = scan_sadcp[ri].assign_coords(z_shift=scan_sadcp[ri].z + dz/2) # for contour plot on pcolormesh
 
+        # calculate Vorticity, M**2, N**2, and Ri_Balanced
+        scan_sadcp[ri]['across_track_vel'] = scan_sadcp[ri].u #(scan_sadcp[ri].u**2+scan_sadcp[ri].v**2)**0.5
+        scan_sadcp[ri] = scan_sadcp[ri].assign_coords(distance=scan_sadcp[ri].x_m) # temporary for these calcs
         scan_sadcp[ri] = cf.calc_N2_M2(scan_sadcp[ri])
         scan_sadcp[ri] = cf.calc_vertical_vorticity(scan_sadcp[ri])
         scan_sadcp[ri] = cf.calc_Ri_Balanced(scan_sadcp[ri])
         scan_sadcp[ri] = cf.SI_GI_Check(scan_sadcp[ri])
+        scan_sadcp[ri] = scan_sadcp[ri].drop('distance') # sticking with x_m
+
+        # now interpolate to uniform x-spacing instead of time, as this is more useful in this analysis
+        scan_sadcp[ri] = scan_sadcp[ri].swap_dims({'time': 'x_m'}) 
+        # do time separately, otherwise it is lost with scan_sadcp[ri].interp()
+        new_time = pd.to_datetime(np.interp(np.arange(0,grid_dx*scan_sadcp[ri].x_m.size,grid_dx),
+                                            scan_sadcp[ri].x_m.values,pd.to_datetime(scan_sadcp[ri].time.values).astype(int))) 
+        scan_sadcp[ri] = scan_sadcp[ri].interp(x_m=np.arange(0,grid_dx*scan_sadcp[ri].x_m.size,grid_dx))
+        # put time back in
+        scan_sadcp[ri].coords['time'] = scan_sadcp[ri].x_m
+        scan_sadcp[ri]['time'].values = new_time.values
+        # and create multi-dimension 
+        # to create multi-index without losing time information; rename to associate all variables with xy instead of time
+        scan_sadcp[ri] = scan_sadcp[ri].rename({'x_m': 'xy'})
+        scan_sadcp[ri].coords['x_m'] = scan_sadcp[ri].xy
+        scan_sadcp[ri] = scan_sadcp[ri].assign_coords(x_km=scan_sadcp[ri].x_m/1000)
+        scan_sadcp[ri] = scan_sadcp[ri].assign_coords(time_secs=scan_sadcp[ri].time.astype(int))
+        scan_sadcp[ri] = scan_sadcp[ri].set_index(xy=['x_m','x_km','lat','lon','time','time_secs'])
+        
+        # a high resolution version of SADCP data
+        sadcp_out[ri] = sadcp_out[ri].assign_coords(lon=sadcp_out[ri].lon)
+        sadcp_out[ri] = sadcp_out[ri].assign_coords(lat=sadcp_out[ri].lat)
+        sadcp_out[ri].distance.values = np.cumsum(np.trunc(np.append(np.array(0),gsw.distance(sadcp_out[ri].lon.dropna(dim='time').values,  
+                                                                                               sadcp_out[ri].lat.dropna(dim='time').values,p=0))))
+        sadcp_out[ri] = sadcp_out[ri].rename({'distance': 'x_m'})
+        sadcp_out[ri] = sadcp_out[ri].swap_dims({'time': 'x_m'}) 
+        dx_sadcp = 300 # for the two transects, dx is currently < 300, so 300 seems acceptable
+        new_time2 = pd.to_datetime(np.interp(np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp),
+                                            sadcp_out[ri].x_m.values,pd.to_datetime(sadcp_out[ri].time.values).astype(int))) 
+        sadcp_out[ri] = sadcp_out[ri].interp(x_m=np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp))
+        sadcp_out[ri].coords['time'] = sadcp_out[ri].x_m
+        sadcp_out[ri]['time'].values = new_time2.values
+        sadcp_out[ri] = sadcp_out[ri].rename({'x_m': 'xy'})
+        sadcp_out[ri] = sadcp_out[ri].assign_coords(x_m=sadcp_out[ri].xy)
+        sadcp_out[ri] = sadcp_out[ri].assign_coords(time_secs=sadcp_out[ri].time.astype(int))
+        sadcp_out[ri] = sadcp_out[ri].assign_coords(x_km=sadcp_out[ri].x_m/1000)
+        sadcp_out[ri] = sadcp_out[ri].set_index(xy=['x_m','x_km','lat','lon','time','time_secs'])
+
+        
+        #scan_sadcp[ri] = scan_sadcp[ri].stack(xy = ('x_m','x_km','lon','lat','time')) #set_index(xy=['x_m','x_km','lon','lat','time'])
+        #scan_sadcp[ri] = scan_sadcp[ri].set_index(xy=['x_m','x_km','lon','lat','time'])#.rename({'x_m': 'xy'})
+        #scan_sadcp[ri] = scan_sadcp[ri].rename({'time': 'xy'})
+        #scan_sadcp[ri].coords['time'] = scan_sadcp[ri].xy
+        #scan_sadcp[ri] = scan_sadcp[ri].set_index(xy=['x_m','x_km','lat','lon','time'])
 
 
+        
         #Rib_range = [0,0.25]
         #scan_sadcp[ri].Rib.T.plot(vmin=Rib_range[0],vmax=Rib_range[1])
         #vort_range = [-0.0005,0.0005]
         #scan_sadcp[ri].absolute_vorticity.T.plot(vmin=vort_range[0],vmax=vort_range[1],cmap=plt.cm.coolwarm)
 
-    return scan_sadcp, scanfish_data, sadcp
+    return scan_sadcp, scanfish_data, sadcp_out, sadcp

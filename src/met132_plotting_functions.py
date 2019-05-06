@@ -1,3 +1,148 @@
+def fftwaveplt_KE(scan_sadcp_in, depth_range_in=None,ylim=[4*10**-2, 10**1],xlim=[10**3, 6*10**4],nbins_spec_av=10,wavelet_scale_av=[10**3,10**4],psd_only=None):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import xarray as xr
+    import Denmark_Strait.src.spectra_and_wavelet_functions as sw
+    import scipy as sp
+    import scipy.stats as ss
+    import pycwt as wavelet
+    from pyspec import spectrum as spec    
+    
+    # based on plotting in SubEx_Paper4_Analysis.ipynb
+    
+    # Loop through each depth and get spectra of each; then average together
+      
+    # Second setup values for Welch windowing
+    # N sample series, divided into P segments of D samples with a shift S between adjacent segments
+    probability = 0.95
+    
+    if psd_only is None:
+        nrows = 3
+    else: 
+        nrows = 1
+            
+    fig, axs = plt.subplots(nrows=3,ncols=depth_range_in.size, sharex=True, figsize=(18,12)) #
+    
+    for di in (range(depth_range_in.size)):
+        color_idx = np.linspace(0, 1, len(scan_sadcp_in)+1)
+        for ci, ti in zip(color_idx, range(len(scan_sadcp_in))): # loop through transects
+            # get range of depths to be used
+            if isinstance(depth_range_in[di],slice): 
+                depth_range = scan_sadcp_in[ti].z.sel(z=depth_range_in[di]).values # depth_range_in must be negative 
+            else: # use full depth range 
+                depth_range = scan_sadcp_in[ti].z.values
+
+            N = scan_sadcp_in[ti].xy.shape[0]
+            D = round(N/3)
+            S = D*0.5 # 50% shift
+            # Number of estimations
+            P = int((N - D) / S) + 1
+            # degrees of freedom
+            dof = 2*P
+
+            #color_idx = np.linspace(0, 1, scan_sadcp_in[ti].z.shape[0])
+            for zi in depth_range: # loop through depths
+
+                dx = scan_sadcp_in[ti].x_m.diff('xy').mean().values
+                # PSD 
+                wavenumKE, psdKE = sp.signal.welch(scan_sadcp_in[ti].ke.sel(z=zi).dropna('xy'), 
+                                               fs=1/dx, window="hanning", nperseg=D, noverlap=S, detrend="linear")
+                # Averaging with 10 bins decade; from pyspec; removing k=0
+                wavenumKE, psdKE =  spec.avg_per_decade(wavenumKE[1:],psdKE[1:],nbins=nbins_spec_av)
+
+                if zi==depth_range[0]:
+                    axs[0,di].set_title('a) KE - PSD')
+                if zi==depth_range[0]:
+                    psdKE_transect = psdKE
+                if psdKE.size > 0:
+                    psdKE_transect = np.vstack((psdKE_transect, psdKE)) 
+                    wavenumKE_transect = wavenumKE
+
+                # global wavelet spectrum
+                if psd_only is None:
+                    # getting coords right for wavelet
+                    dat_in = scan_sadcp_in[ti].ke.sel(z=zi).dropna('xy').reset_index('xy').swap_dims({'xy': 'x_m'})
+                    if dat_in.size > 0:
+                        waveKE = sw.run_wavelet(dat_in,wavelet_scale_av,time_name='x_m',period_name='wavelength')
+
+                    waveKE['glbl_power_var'] = waveKE.std2.values * waveKE.glbl_power
+                    axs[2,di].set_xscale('log')
+                    axs[2,di].set_yscale('log')
+
+                    if zi==depth_range[0]:
+                        axs[1,di].set_title('b) KE - Variance-preserving plot')
+                        axs[2,di].set_title('c) KE -  GWS')
+
+                    if zi==depth_range[0]:
+                        waveKE_transect = waveKE['glbl_power_var'].values
+
+                    if psdKE.size > 0:
+                        waveKE_transect = np.vstack((waveKE_transect, waveKE['glbl_power_var'].values))
+                        waveKE_wavelength = waveKE.wavelength.values
+                        waveKE_last = waveKE
+                    if zi==depth_range[0]:
+                        dat_last = dat_in
+                        
+
+            num_spectra_transect = psdKE_transect.shape[0]
+            # get mean spectra
+            psdKE_transect = psdKE_transect.mean(axis = 0)
+            dof_transect = dof+num_spectra_transect
+
+            # get psd value for different locations of confidence limit bar
+            conf_x = 1/np.array((3*10**4,10**4,5*10**3,10**3,6*10**2))
+            conf_y1, conf1 = np.zeros(conf_x.shape), np.zeros((2,conf_x.shape[0]))
+            for tti in range(conf_x.shape[0]):
+                conf_y1[tti] = psdKE_transect[np.abs(wavenumKE_transect-conf_x[tti]).argmin()]
+                conf1[:,tti] = conf_y1[tti] * dof_transect / ss.chi2.ppf([1-probability, probability], dof_transect)
+
+            # confidence interval from pyspec
+            El,Eu = spec.spec_error(psdKE_transect, sn=num_spectra_transect, ci=0.95) 
+            axs[0,di].fill_between(1/(wavenumKE_transect),El,Eu, color=plt.cm.viridis(ci), alpha=0.25)
+            axs[0,di].loglog(1/(wavenumKE_transect),psdKE_transect, alpha=0.85,color=plt.cm.viridis(ci),lw=2,label=('Transect ',str(ti+1)))
+            axs[0,di].plot([1/conf_x, 1/conf_x], conf1, color=plt.cm.viridis(ci), lw=4.5,alpha=0.5)
+            axs[0,di].plot(1/conf_x, conf_y1, color=plt.cm.viridis(ci), linestyle='none', lw=4.5, 
+                    marker='_', ms=8, mew=2,alpha=0.5)
+            sw.plot_loglog_slope(axs[0,di],np.array((5/3,2,3)),xlim,ylim)
+            
+            if psd_only is None:
+                 # variance preserving
+                axs[1,di].semilogx(1/(wavenumKE_transect), psdKE_transect * wavenumKE_transect, color=plt.cm.viridis(ci), alpha=0.85,lw=2)
+                axs[1,di].plot([1/conf_x, 1/conf_x], conf1*conf_x, color=plt.cm.viridis(ci), lw=4.5,alpha=0.5)
+                axs[1,di].plot(1/conf_x, conf_y1*conf_x, color=plt.cm.viridis(ci), linestyle='none', lw=4.5, 
+                        marker='_', ms=8, mew=2,alpha=0.5)
+                # GWS
+                waveKE_transect = waveKE_transect.mean(axis = 0)
+                axs[2,di].loglog(waveKE_wavelength,waveKE_transect, alpha=0.85,color=plt.cm.viridis(ci),lw=2)
+                # Calculates the global wavelet spectrum and determines its significance level.
+                std = dat_last.std()                      # Standard deviation
+                std2 = std ** 2                      # Variance
+                dx = np.diff(dat_last.x_m).mean() #dat_last.time_secs.diff('time_secs').mean('time_secs').values*10**(-9)/(60*60*24) # using time_secs which is an integer
+                N = dat_last.shape[0]                          # Number of measurements
+                mother = wavelet.Morlet(6)           # Morlet mother wavelet with m=6
+                slevel = 0.95                        # Significance level
+                alpha, _, _ = wavelet.ar1(dat_last.values)
+                # !!! IS THIS CORRECT
+                dof_transect = dof_transect - waveKE_last.scales #
+                waveKE_glbl_signif, tmp = wavelet.significance(std2.values, dx, waveKE_last.scales, 1, alpha,
+                                                        significance_level=slevel, dof=dof_transect,
+                                                        wavelet=mother)
+                waveKE_glbl_signif = N*dx*waveKE_glbl_signif/waveKE_last.scales # rpn !!! N*dt*   /scales to match glbl_power correction
+                axs[2,di].loglog(waveKE_wavelength,waveKE_glbl_signif, alpha=0.85,color=plt.cm.viridis(ci),lw=2,linestyle='--')
+
+
+        if psd_only is None:
+            axs[2,di].set_xlabel('Wavelength [m]')
+        else:
+            axs[0,di].set_xlabel('Wavelength [m]')
+        if di==0:
+            axs[0,di].set_ylabel('Power Spectral Density [m$^4$ s$^{-4}$]')
+            axs[0,di].legend()
+        axs[0,di].set_ylim(ylim)
+        axs[0,di].set_xlim(xlim)
+        axs[0,di].invert_xaxis()
+
+
 def plot_line_at_one_depth(scan_sadcp, var_names, depth_in, window=10, x_lim=[0,180], y_lim=[-2e-7,2e-7], last_row_flag=None):
     import numpy as np
     import matplotlib.pyplot as plt
@@ -10,7 +155,8 @@ def plot_line_at_one_depth(scan_sadcp, var_names, depth_in, window=10, x_lim=[0,
     for t_in in range(len(scan_sadcp)): # loop through the different variables
         if var_names[t_in] == '': continue # blank
     
-        ax[t_in].plot(scan_sadcp[t_in].x_km,scan_sadcp[t_in][var_names].sel(z=scan_sadcp[t_in].z==depth_in).rolling(center=True,time=window).mean())
+        # due to multi-indexing, problems with "rolling"; workaround
+        ax[t_in].plot(scan_sadcp[t_in].x_km,scan_sadcp[t_in][var_names].reset_index('xy').set_index(xy=['time']).rename({'xy':'time'}).sel(z=scan_sadcp[t_in].z==depth_in).rolling(center=True,time=window).mean())
         ax[t_in].axhline(y=0)
         
         if var_names == var_names and t_in < 1: ax[t_in].set_ylabel('db/dx$_{30m}$ [s$^{-1}$]')
@@ -97,19 +243,20 @@ def plot_profile_view(scan_sadcp, ctd_ladcp, var_names, x_lim=[0,180],y_lim=[-15
                 if var_names[ci] == 'relative_vorticity': platform[ri]['relative_vorticity']  = platform[ri]['relative_vorticity']*10**6
 
                 if pcolormesh_flag is None:
-                    conmap = platform[ri][var_names[ci]].plot.contourf(x='x_km',y='z',ax=ax[cik],vmin=v_range[0],vmax=v_range[1],
+                    # due to multi-indexing, problems with x-axis; workaround: reset_index('xy')
+                    conmap = platform[ri][var_names[ci]].reset_index('xy').plot.contourf(x='x_km',y='z',ax=ax[cik],vmin=v_range[0],vmax=v_range[1],
                                                                     cmap = cmap_in, levels = np.linspace(v_range[0],v_range[1],21),
                                                                     cbar_kwargs={'ticks': np.linspace(v_range[0],v_range[1],3), 
                                                                                 'orientation':"horizontal",'pad': -0.2,
                                                                                 'label':'','shrink':0.5,'aspect':10})
                 elif var_names[ci] == 'Instability_GravMixSymInertStab':
-                    conmap = platform[ri][var_names[ci]].plot.pcolormesh(x='x_km',y='z',ax=ax[cik],vmin=v_range[0],vmax=v_range[1],
+                    conmap = platform[ri][var_names[ci]].reset_index('xy').plot.pcolormesh(x='x_km',y='z',ax=ax[cik],vmin=v_range[0],vmax=v_range[1],
                                                                     cmap = cmap_in, levels = np.arange(0,6,1), shading = shading_type,
                                                                     cbar_kwargs={'label': ([' ','GI','MI','SI','II']), 
                                                                                 'orientation':"horizontal",'pad': -0.2,
                                                                                 'shrink':0.5,'aspect':10})
                 else:    
-                    conmap = platform[ri][var_names[ci]].plot.pcolormesh(x='x_km',y='z',ax=ax[cik],vmin=v_range[0],vmax=v_range[1],
+                    conmap = platform[ri][var_names[ci]].reset_index('xy').plot.pcolormesh(x='x_km',y='z',ax=ax[cik],vmin=v_range[0],vmax=v_range[1],
                                                                         cmap = cmap_in, shading = shading_type, levels = np.linspace(v_range[0],v_range[1],21),
                                                                         cbar_kwargs={'ticks': np.linspace(v_range[0],v_range[1],3), 
                                                                                     'orientation':"horizontal",'pad': -0.2,
@@ -117,10 +264,10 @@ def plot_profile_view(scan_sadcp, ctd_ladcp, var_names, x_lim=[0,180],y_lim=[-15
                 if var_names[ci] == 'Instability_GravMixSymInertStab':
                     # Mixed layer depth
                     platform[ri]['MLD'] = platform[ri].sigma_0 - platform[ri].sigma_0.sel(z=platform[ri].z.max(),method='nearest') # density nearest to surface
-                    conmap3 = platform[ri].MLD.T.plot.contour(x='x_km',y='z',ax=ax[cik],levels=[0.01,0.1],colors='0.05',linewidths=1.5)
-                else:
+                    conmap3 = platform[ri].MLD.T.reset_index('xy').plot.contour(x='x_km',y='z',ax=ax[cik],levels=[0.01,0.1],colors='0.05',linewidths=1.5)
+                elif hasattr(platform[ri], 'sigma_0'):
                     # contour of density on top !!! Note. xarray seems to account for different plotting locations of contour and pcolormesh
-                    conmap2 = platform[ri].sigma_0.plot.contour(x='x_km',y='z',ax=ax[cik],levels = sigma_levels,colors='0.25',linewidths=1)
+                    conmap2 = platform[ri].sigma_0.reset_index('xy').plot.contour(x='x_km',y='z',ax=ax[cik],levels = sigma_levels,colors='0.25',linewidths=1)
 
                 if ri > 0: # remove colorbar
                     conmap.colorbar.remove()     
@@ -145,7 +292,9 @@ def plot_profile_view(scan_sadcp, ctd_ladcp, var_names, x_lim=[0,180],y_lim=[-15
                 if ci == 0:
                     dates = pd.Series(platform[ri].time.values)
                     ax[cik].text(0,0,(str(dates[0].month)+'-'+str(dates[0].day)+' '+str(dates[0].hour)+':'+str(dates[0].minute)),
-                                   transform=ax[cik].transAxes,horizontalalignment='left',verticalalignment='bottom',fontsize=10)        
+                                   transform=ax[cik].transAxes,horizontalalignment='left',verticalalignment='top',fontsize=10)        
+                    ax[cik].text(1,0,(str(dates[dates.size-1].month)+'-'+str(dates[dates.size-1].day)+' '+str(dates[dates.size-1].hour)+':'+str(dates[dates.size-1].minute)),
+                                   transform=ax[cik].transAxes,horizontalalignment='right',verticalalignment='top',fontsize=10)        
                 else:
                     ax[cik].text(0,0.9,' S',transform=ax[cik].transAxes,horizontalalignment='left',verticalalignment='top',fontsize=10)      
                     ax[cik].text(1,0.9,' N',transform=ax[cik].transAxes,horizontalalignment='right',verticalalignment='top',fontsize=10)      
@@ -159,9 +308,8 @@ def plot_profile_view(scan_sadcp, ctd_ladcp, var_names, x_lim=[0,180],y_lim=[-15
         
     #return ax
     
-    
-def plot_map_view(sadcp, ctd_data, glider_track, ladcp_data, scanfish_data,scan_sadcp, ctd_ladcp,
-                              topo=None,sst_map=None,sst_map1=None,x_lim=[0,180]):
+def plot_map_view(sadcp=None, ctd_data=None, glider_track=None, ladcp_data=None, scanfish_data=None, scan_sadcp=None, ctd_ladcp=None,
+                              topo=None,sst_map=None,sst_map1=None,ssh_name='sst',x_lim=[0,180]):
     
     from mpl_toolkits.basemap import Basemap
     import numpy as np
@@ -180,7 +328,8 @@ def plot_map_view(sadcp, ctd_data, glider_track, ladcp_data, scanfish_data,scan_
 
     fig, ax = plt.subplots(ncols = 2, sharey=True, figsize=(15,8))
     sst_range = np.array((15,19))
-    ssh_range = np.array((-0.1,0.1))
+    ssh_range = np.array((0.25,0.4))
+    Ro_range = np.array((-0.4,0.4))
     lat_1, lat_2, lon_0, lat_0 =-25.,-27.5,10,-27.5,
     lat_1, lat_2, lon_0, lat_0 =-25.,-27.5,13,-26,
 
@@ -194,7 +343,7 @@ def plot_map_view(sadcp, ctd_data, glider_track, ladcp_data, scanfish_data,scan_
         # add contour lines of bathymetry
         lon2, lat2 = np.meshgrid(topo.lon.values,topo.lat.values)
         #m.contourf(lon2, lat2,topo.Band1,40,cmap=plt.cm.Blues_r,latlon=True)
-        m.contour(lon2, lat2,topo.Band1,20,colors='0.85',latlon=True)
+        m.contour(lon2, lat2,topo.Band1,5,linestyles='solid',linewidths=1.,colors='0.35',latlon=True)
 
         if si == 0:
             # === SST MAP ===
@@ -203,42 +352,86 @@ def plot_map_view(sadcp, ctd_data, glider_track, ladcp_data, scanfish_data,scan_
             sst_plt = m.pcolormesh(lon2, lat2, sst_map.sst,vmin=sst_range[0],vmax=sst_range[1],cmap=plt.cm.coolwarm,latlon=True)
             plt.text(1,1,sst_map.time_coverage_start[:-8],transform=m.ax.transAxes,horizontalalignment='right',verticalalignment='bottom')        
         else:
-            # === SST MAP ===
-            lon2, lat2 = np.meshgrid(sst_map1.lon.values,sst_map1.lat.values)
+            # === SSH MAP ===
             #m.contourf(lon2, lat2, sst_map1.analysed_sst[0,:,:],40,cmap=plt.cm.coolwarm,latlon=True)
-            sst_plt = m.pcolormesh(lon2, lat2, sst_map1.sst,vmin=sst_range[0],vmax=sst_range[1],cmap=plt.cm.coolwarm,latlon=True)
-            plt.text(1,1,sst_map1.time_coverage_start[:-8],transform=m.ax.transAxes,horizontalalignment='right',verticalalignment='bottom')        
+            lon2, lat2 = np.meshgrid(sst_map1.lon_left.values,sst_map1.lat_left.values)
+            Ro_plt = m.pcolormesh(lon2, lat2, sst_map1.Ro,vmin=Ro_range[0],vmax=Ro_range[1],cmap=plt.cm.coolwarm,latlon=True)
+            lon2, lat2 = np.meshgrid(sst_map1.lon.values,sst_map1.lat.values)
+            ssh_plt = m.contour(lon2, lat2, sst_map1.adt,5,linestyles='solid',linewidths=2.,colors='0.01',latlon=True)
+            ssh_date = pd.Series(sst_map1.time.values)
+            plt.text(1,1,(str(ssh_date[0].year)+'-'+str(ssh_date[0].month)+'-'+str(ssh_date[0].day)),
+                     transform=m.ax.transAxes,horizontalalignment='right',verticalalignment='bottom')        
             # === SSH MAP ===
             #lon2, lat2 = np.meshgrid(ssh_map.lon.values,ssh_map.lat.values)
             #ssh_plt = m.contour(lon2, lat2, ssh_map.sla[0,:,:],vmin=ssh_range[0],vmax=ssh_range[1],colors='0.5',latlon=True) # 
-            #plt.text(0,1,ssh_map.time_coverage_start[:-4],transform=m.ax.transAxes,horizontalalignment='left',verticalalignment='bottom')        
+            #plt.text(0,1,ssh_map.time_coverage_start[:-4],transform=m.ax.transAxes,horizontalalignment='left',verticalalignment='bottom')  
+            #if hasattr(sst_map1, 'ugos'):
+            
+            # add Geostrophic current vectors
+            gos_plt = m.quiver(lon2, lat2, sst_map1.ugos,sst_map1.vgos,latlon=True)#,scale=700)
+            # make quiver key.
+            qk = plt.quiverkey(gos_plt, 0.8, 0.8, 0.1, '0.1 m/s', labelpos='W')
 
-        # plot ship track from SADCP data
-        m.plot(sadcp.lon.values, sadcp.lat.values,'-k', latlon=True)
 
-        # plot ladcp/ctd stations
-        m.plot(ctd_data.lon.values, ctd_data.lat.values, 'ko', latlon=True)
-        #m.plot(ladcp_data.lon.values, ladcp_data.lat.values, 'b.', latlon=True)
+        if sadcp is not None:
+            # plot ship track from SADCP data
+            m.plot(sadcp.lon.values, sadcp.lat.values,'-',color='0.55', latlon=True)
 
-        # plot glider track
-        m.plot(glider_track[0,:].values, glider_track[1,:].values, color='0.75',lw=2, latlon=True)
+        if ctd_data is not None:
+            # plot ladcp/ctd stations
+            m.plot(ctd_data.lon.values, ctd_data.lat.values, 'ko', latlon=True)
+            #m.plot(ladcp_data.lon.values, ladcp_data.lat.values, 'b.', latlon=True)
+
+        if glider_track is not None:
+            # plot glider track
+            m.plot(glider_track[0,:].values, glider_track[1,:].values, color='#3cb371',lw=2, latlon=True)
 
         # plot sections that are used below
-        for ri in range(len(ctd_ladcp)):
-            m.plot(ctd_ladcp[ri].lon.values,ctd_ladcp[ri].lat.values, '.', color= 'chartreuse', latlon=True)
+        if ctd_ladcp is not None:
+            for ri in range(len(ctd_ladcp)):
+                m.plot(ctd_ladcp[ri].lon.dropna('xy').values,ctd_ladcp[ri].lat.dropna('xy').values, '.', color= 'chartreuse', latlon=True)
+                if si == 0:
+                    skip=1
+                    ladcp_plt = m.quiver(ctd_ladcp[ri].lon.dropna('xy')[::skip].values, ctd_ladcp[ri].lat.dropna('xy')[::skip].values, 
+                                              ctd_ladcp[ri].u.sel(z=ctd_ladcp[ri].z[-5]).dropna('xy')[::skip].values,
+                                              ctd_ladcp[ri].v.sel(z=ctd_ladcp[ri].z[-5]).dropna('xy')[::skip].values,
+                                              latlon=True)
+                    # make quiver key.
+                    qk = plt.quiverkey(ladcp_plt, 0.9, 0.9, 0.1, '0.1 m/s', labelpos='W')
+            
+            start_end_date = pd.Series([ctd_ladcp[0].time[0].values,ctd_ladcp[-1].time[-1].values])
+        
+        if scan_sadcp is not None:
+            for ri in range(len(scan_sadcp)):
+                m.plot(scan_sadcp[ri].lon.dropna('xy').values,scan_sadcp[ri].lat.dropna('xy').values, lw = 4, color= 'SlateGrey', latlon=True)
+                
+                if si == 0:
+                    skip=5
+                    sadcp_plt = m.quiver(scan_sadcp[ri].lon.dropna('xy')[::skip].values, scan_sadcp[ri].lat.dropna('xy')[::skip].values, 
+                                              scan_sadcp[ri].u.sel(z=scan_sadcp[ri].z[-5]).dropna('xy')[::skip].values,
+                                              scan_sadcp[ri].v.sel(z=scan_sadcp[ri].z[-5]).dropna('xy')[::skip].values,
+                                              latlon=True)
+                    # make quiver key.
+                    qk = plt.quiverkey(sadcp_plt, 0.9, 0.9, 0.1, '0.1 m/s', labelpos='W')
+            
+            start_end_date = pd.Series([scan_sadcp[0].time[0].values,scan_sadcp[-1].time[-1].values])
 
-        for ri in range(len(scan_sadcp)):
-            m.plot(scan_sadcp[ri].lon.values,scan_sadcp[ri].lat.values, lw = 4, color= 'SlateGrey', latlon=True)
-
+        m.drawmapscale(14.5, -25.5, 15, -25.5, 50,barstyle='fancy')
+            
         #if si == 0:
-        #    plt.colorbar(sst_plt, cax=axins)#, ticks=[-0.5, 0, 0.5])
+        #    plt.colorbar(sst_plt)#, ticks=[-0.5, 0, 0.5])
         #else:
-        #    plt.colorbar(ssh_plt, cax=axins)#, ticks=[-0.5, 0, 0.5])
+        #    plt.colorbar(ssh_plt)#, ticks=[-0.5, 0, 0.5])
 
         if si == 0:
             # add inset showing globe
             add_globalmap_inset(m)
-
+            # date range of data being plotted            
+            if scan_sadcp is not None or ctd_ladcp is not None:
+                plt.text(0,1,(str(start_end_date[0].year)+'-'+str(start_end_date[0].month)+'-'+str(start_end_date[0].day)+':'+str(start_end_date[1].month)+'-'+str(start_end_date[1].day)),
+                              transform=m.ax.transAxes,horizontalalignment='left',verticalalignment='bottom')        
+        
+            
 def make_movie_ship_tracks(topo,sadcp,ladcp_data):
     from mpl_toolkits.basemap import Basemap
     import numpy as np
@@ -412,7 +605,7 @@ def OLD_plot_profile_view(scan_sadcp, ctd_ladcp, x_lim=[0,180],M2_flag=None):
                 scan_sadcp[ri][var_name]  = np.log10(scan_sadcp[ri]['db_dx'])
             if ci == ci_next[1] and M2_flag is not None: var_name, v_range, cmap_in = 'Rib', Ri_range, plt.cm.Blues_r #, 'gouraud'
                 
-            conmap = scan_sadcp[ri][var_name].plot.contourf(x='x_km',y='z',ax=ax[rik,ci],vmin=v_range[0],vmax=v_range[1],
+            conmap = scan_sadcp[ri][var_name].reset_index('xy').plot.contourf(x='x_km',y='z',ax=ax[rik,ci],vmin=v_range[0],vmax=v_range[1],
                                                             cmap = cmap_in, 
                                                             cbar_kwargs={'ticks': np.arange(v_range[0],v_range[1]+1,1), 
                                                                         'orientation':"horizontal",'pad': -0.2,
@@ -501,7 +694,7 @@ def OLD_plot_profile_view(scan_sadcp, ctd_ladcp, x_lim=[0,180],M2_flag=None):
                 ctd_ladcp[ri][var_name] = np.log10(ctd_ladcp[ri]['db_dz'])
             if ci == ci_next[1] and M2_flag is not None: var_name, v_range, cmap_in = 'Rig', Ri_range, plt.cm.Blues_r #, 'gouraud'
                 
-            conmap = ctd_ladcp[ri][var_name].plot.contourf(x='x_km',y='z',ax=ax[rik,ci],vmin=v_range[0],vmax=v_range[1], 
+            conmap = ctd_ladcp[ri][var_name].reset_index('xy').plot.contourf(x='x_km',y='z',ax=ax[rik,ci],vmin=v_range[0],vmax=v_range[1], 
                                                            cmap = cmap_in, 
                                                            cbar_kwargs={'ticks': np.arange(v_range[0],v_range[1]+1,1), 
                                                                         'orientation':"horizontal",'pad': -0.2,
@@ -861,3 +1054,235 @@ def OLD_plot_M2_UV_sections(sadcp=None,ind_sadcp_section=None,scanfish_gridded_s
                           ctd_data.sigma_0.isel(xy=ind_CTD_section[ri]), levels = sigma_levels,colors='0.25')
     #return ax
     
+def OLD_plot_map_view(sadcp, ctd_data, glider_track, ladcp_data, scanfish_data,scan_sadcp, ctd_ladcp,
+                              topo=None,sst_map=None,sst_map1=None,ssh_name='sst',x_lim=[0,180]):
+    
+    from mpl_toolkits.basemap import Basemap
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import matplotlib.cbook
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+    from oceans.datasets import etopo_subset
+    from oceans.sw_extras import gamma_GP_from_SP_pt
+    from matplotlib.patches import Polygon
+    import gsw
+    from matplotlib import animation, rc
+    from IPython.display import HTML
+    import pandas as pd
+
+    # Stations map.
+
+    fig, ax = plt.subplots(ncols = 2, sharey=True, figsize=(15,8))
+    sst_range = np.array((15,19))
+    ssh_range = np.array((-0.1,0.1))
+    lat_1, lat_2, lon_0, lat_0 =-25.,-27.5,10,-27.5,
+    lat_1, lat_2, lon_0, lat_0 =-25.,-27.5,13,-26,
+
+    for si in np.array((0,1)): 
+        # setup map
+        m = Basemap(width=450000,height=300000,resolution='i',projection='aea',lon_0=lon_0,lat_0=lat_0)
+        m.ax = ax[si]
+        m.drawcoastlines(), m.fillcontinents(color='0.85')
+        m.drawparallels(np.arange(-90.,91.,1.),labels=[True,False,False,False],dashes=[2,2]), m.drawmeridians(np.arange(-180.,181.,1.),labels=[False,False,False,True],dashes=[2,2])
+
+        # add contour lines of bathymetry
+        lon2, lat2 = np.meshgrid(topo.lon.values,topo.lat.values)
+        #m.contourf(lon2, lat2,topo.Band1,40,cmap=plt.cm.Blues_r,latlon=True)
+        m.contour(lon2, lat2,topo.Band1,20,colors='0.85',latlon=True)
+
+        if si == 0:
+            # === SST MAP ===
+            lon2, lat2 = np.meshgrid(sst_map.lon.values,sst_map.lat.values)
+            #m.contourf(lon2, lat2, sst_map.analysed_sst[0,:,:],40,cmap=plt.cm.coolwarm,latlon=True)
+            sst_plt = m.pcolormesh(lon2, lat2, sst_map.sst,vmin=sst_range[0],vmax=sst_range[1],cmap=plt.cm.coolwarm,latlon=True)
+            plt.text(1,1,sst_map.time_coverage_start[:-8],transform=m.ax.transAxes,horizontalalignment='right',verticalalignment='bottom')        
+        else:
+            # === SST/SSH MAP ===
+            lon2, lat2 = np.meshgrid(sst_map1.lon.values,sst_map1.lat.values)
+            #m.contourf(lon2, lat2, sst_map1.analysed_sst[0,:,:],40,cmap=plt.cm.coolwarm,latlon=True)
+            ssh_plt = m.pcolormesh(lon2, lat2, sst_map1[ssh_name],vmin=ssh_range[0],vmax=ssh_range[1],cmap=plt.cm.coolwarm,latlon=True)
+            plt.text(1,1,sst_map1.time_coverage_start[:-8],transform=m.ax.transAxes,horizontalalignment='right',verticalalignment='bottom')        
+            # === SSH MAP ===
+            #lon2, lat2 = np.meshgrid(ssh_map.lon.values,ssh_map.lat.values)
+            #ssh_plt = m.contour(lon2, lat2, ssh_map.sla[0,:,:],vmin=ssh_range[0],vmax=ssh_range[1],colors='0.5',latlon=True) # 
+            #plt.text(0,1,ssh_map.time_coverage_start[:-4],transform=m.ax.transAxes,horizontalalignment='left',verticalalignment='bottom')  
+            if hasattr(sst_map1, 'ugos'):
+                # add Geostrophic current vectors
+                gos_plt = m.quiver(lon2, lat2,sst_map1.ugos,sst_map1.vgos)#,scale=700)
+                # make quiver key.
+                qk = plt.quiverkey(gos_plt, 0.1, 0.1, 1, '1 m/s', labelpos='W')
+
+
+        # plot ship track from SADCP data
+        m.plot(sadcp.lon.values, sadcp.lat.values,'-k', latlon=True)
+
+        # plot ladcp/ctd stations
+        m.plot(ctd_data.lon.values, ctd_data.lat.values, 'ko', latlon=True)
+        #m.plot(ladcp_data.lon.values, ladcp_data.lat.values, 'b.', latlon=True)
+
+        # plot glider track
+        m.plot(glider_track[0,:].values, glider_track[1,:].values, color='0.75',lw=2, latlon=True)
+
+        # plot sections that are used below
+        for ri in range(len(ctd_ladcp)):
+            m.plot(ctd_ladcp[ri].lon.values,ctd_ladcp[ri].lat.values, '.', color= 'chartreuse', latlon=True)
+
+        for ri in range(len(scan_sadcp)):
+            m.plot(scan_sadcp[ri].lon.values,scan_sadcp[ri].lat.values, lw = 4, color= 'SlateGrey', latlon=True)
+
+        m.drawmapscale(14.5, -25.5, 15, -25.5, 50,barstyle='fancy')
+            
+        #if si == 0:
+        #    plt.colorbar(sst_plt, cax=axins)#, ticks=[-0.5, 0, 0.5])
+        #else:
+        #    plt.colorbar(ssh_plt, cax=axins)#, ticks=[-0.5, 0, 0.5])
+
+        if si == 0:
+            # add inset showing globe
+            add_globalmap_inset(m)
+            
+def OLDfftwaveplt_KE(scan_sadcp_in, depth_range_in=None):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import xarray as xr
+    import Denmark_Strait.src.spectra_and_wavelet_functions as sw
+    import scipy as sp
+    import scipy.stats as ss
+    import pycwt as wavelet
+    
+    # based on plotting in SubEx_Paper4_Analysis.ipynb
+    
+    # Loop through each depth and get spectra of each; then average together
+      
+    # for plotting lines of uniform slope
+    slope_factor = np.array((.000000005,.0000000005,.0000000000005)) # to fit on plot
+
+    # Second setup values for Welch windowing
+    # N sample series, divided into P segments of D samples with a shift S between adjacent segments
+    probability = 0.95
+    #D = 25
+
+    fig, axs = plt.subplots(nrows=3,ncols=len(depth_range_in), sharex=True, figsize=(20,12)) #
+    
+    for di in (range(len(depth_range_in))):
+        color_idx = np.linspace(0, 1, len(scan_sadcp_in)+1)
+        for ci, ti in zip(color_idx, range(len(scan_sadcp_in))): # loop through transects
+            # get range of depths to be used
+            if isinstance(depth_range_in[di],slice): 
+                depth_range = scan_sadcp_in[ti].z.sel(z=depth_range_in[di]).values # depth_range_in must be negative 
+            else: # use full depth range 
+                depth_range = scan_sadcp_in[ti].z.values
+
+            N = scan_sadcp_in[ti].xy.shape[0]
+            D = round(N/3)
+            S = D*0.5 # 50% shift
+            # Number of estimations
+            P = int((N - D) / S) + 1
+            # degrees of freedom
+            dof = 2*P
+
+            #color_idx = np.linspace(0, 1, scan_sadcp_in[ti].z.shape[0])
+            for zi in depth_range: # loop through depths
+
+                dx = scan_sadcp_in[ti].x_m.diff('xy').mean().values
+
+                wavenumKE, psdKE = sp.signal.welch(scan_sadcp_in[ti].ke.sel(z=zi).dropna('xy'), 
+                                               fs=1/dx, window="hanning", nperseg=D, noverlap=S, detrend="linear")
+                # remove frequency = 0; otherwise get warning every loop
+                #wavenumKE, psdKE = wavenumKE[1:], psdKE[1:]
+
+                #axs[0].loglog(1/(wavenumKE),psdKE/1, alpha=0.25,color=plt.cm.coolwarm(ci),lw=1)
+
+                # variance preserving
+                #axs[1].semilogx(1/(wavenumKE), psdKE * wavenumKE, color=plt.cm.coolwarm(ci), alpha=0.25,lw=1)
+
+                # global wavelet spectrum
+                a1,a2 = (10**3,10**4)   
+                dat_in = scan_sadcp_in[ti].ke.sel(z=zi).dropna('xy').reset_index('xy').swap_dims({'xy': 'x_m'})
+                if dat_in.size > 0:
+                    waveKE = sw.run_wavelet(dat_in,(a1,a2),time_name='x_m',period_name='wavelength')
+
+                # The global wavelet spectra 
+                #waveKE.glbl_signif.plot(x='period',ax=axs[2], linestyle='-', linewidth=1., alpha=0.25,color=plt.cm.coolwarm(ci)) 
+                waveKE['glbl_power_var'] = waveKE.std2.values * waveKE.glbl_power
+                #waveKE.glbl_power_var.plot(x='wavelength',ax=axs[2], linestyle='-', linewidth=1., alpha=0.25,color=plt.cm.coolwarm(ci)) 
+                axs[2,di].set_xscale('log')
+                axs[2,di].set_yscale('log')
+                #axs[2].invert_xaxis()
+
+                if zi==depth_range[0]:
+                    axs[0,di].set_title('a) KE - PSD')
+                    axs[1,di].set_title('b) KE - Variance-preserving plot')
+                    axs[2,di].set_title('c) KE -  GWS')
+
+                if zi==depth_range[0]:
+                    psdKE_transect = psdKE
+                    waveKE_transect = waveKE['glbl_power_var'].values
+
+                if psdKE.size > 0:
+                    psdKE_transect = np.vstack((psdKE_transect, psdKE)) 
+                    wavenumKE_transect = wavenumKE
+                    #print(waveKE['glbl_power_var'].shape,waveKE_transect.shape)
+                    waveKE_transect = np.vstack((waveKE_transect, waveKE['glbl_power_var'].values))
+                    waveKE_wavelength = waveKE.wavelength.values
+                    waveKE_last = waveKE
+                if zi==depth_range[0]:
+                    dat_last = dat_in
+
+            num_spectra_transect = psdKE_transect.shape[0]
+            # get mean spectra
+            psdKE_transect = psdKE_transect.mean(axis = 0)
+            dof_transect = dof+num_spectra_transect
+            #psdKE_lower_transect,psdKE_upper_transect = sw.get_fft_conf_interval(psdKE_transect,probability,dof_transect)
+            # get psd value for different locations of confidence limit bar
+            conf_x = 1/np.array((3*10**4,10**4,5*10**3,10**3,6*10**2))
+            conf_y1, conf1 = np.zeros(conf_x.shape), np.zeros((2,conf_x.shape[0]))
+            for tti in range(conf_x.shape[0]):
+                conf_y1[tti] = psdKE_transect[np.abs(wavenumKE_transect-conf_x[tti]).argmin()]
+                conf1[:,tti] = conf_y1[tti] * dof_transect / ss.chi2.ppf([1-probability, probability], dof_transect)
+
+            axs[0,di].loglog(1/(wavenumKE_transect),psdKE_transect, alpha=0.85,color=plt.cm.viridis(ci),lw=2,label=('Transect ',str(ti+1)))
+            axs[0,di].plot([1/conf_x, 1/conf_x], conf1, color=plt.cm.viridis(ci), lw=4.5,alpha=0.5)
+            axs[0,di].plot(1/conf_x, conf_y1, color=plt.cm.viridis(ci), linestyle='none', lw=4.5, 
+                    marker='_', ms=8, mew=2,alpha=0.5)
+            sw.plot_loglog_slope(axs[0,di],np.array((-5/3,-2,-3)),1/(wavenumKE_transect),factor=slope_factor)
+            print()
+            #axs[0].plot(1/(wavenumKE_transect), psdKE_lower_transect/1, '--',color=plt.cm.viridis(ci),lw=2,alpha=0.5)
+            #axs[0].plot(1/(wavenumKE_transect), psdKE_upper_transect/1, '--',color=plt.cm.viridis(ci),lw=2,alpha=0.5)
+            # variance preserving
+            axs[1,di].semilogx(1/(wavenumKE_transect), psdKE_transect * wavenumKE_transect, color=plt.cm.viridis(ci), alpha=0.85,lw=2)
+            axs[1,di].plot([1/conf_x, 1/conf_x], conf1*conf_x, color=plt.cm.viridis(ci), lw=4.5,alpha=0.5)
+            axs[1,di].plot(1/conf_x, conf_y1*conf_x, color=plt.cm.viridis(ci), linestyle='none', lw=4.5, 
+                    marker='_', ms=8, mew=2,alpha=0.5)
+            #axs[1].semilogx(1/(wavenumKE_transect), psdKE_lower_transect * wavenumKE_transect,'--', color=plt.cm.coolwarm(ci),lw=2,alpha=0.5)
+            #axs[1].semilogx(1/(wavenumKE_transect), psdKE_upper_transect * wavenumKE_transect,'--', color=plt.cm.coolwarm(ci),lw=2,alpha=0.5)
+
+            waveKE_transect = waveKE_transect.mean(axis = 0)
+            axs[2,di].loglog(waveKE_wavelength,waveKE_transect, alpha=0.85,color=plt.cm.viridis(ci),lw=2)
+            # Calculates the global wavelet spectrum and determines its significance level.
+            std = dat_last.std()                      # Standard deviation
+            std2 = std ** 2                      # Variance
+            dx = np.diff(dat_last.x_m).mean() #dat_last.time_secs.diff('time_secs').mean('time_secs').values*10**(-9)/(60*60*24) # using time_secs which is an integer
+            N = dat_last.shape[0]                          # Number of measurements
+            mother = wavelet.Morlet(6)           # Morlet mother wavelet with m=6
+            slevel = 0.95                        # Significance level
+            alpha, _, _ = wavelet.ar1(dat_last.values)
+            # !!! IS THIS CORRECT
+            dof_transect = dof_transect - waveKE_last.scales #
+            waveKE_glbl_signif, tmp = wavelet.significance(std2.values, dx, waveKE_last.scales, 1, alpha,
+                                                    significance_level=slevel, dof=dof_transect,
+                                                    wavelet=mother)
+            waveKE_glbl_signif = N*dx*waveKE_glbl_signif/waveKE_last.scales # rpn !!! N*dt*   /scales to match glbl_power correction
+            #axs[2].loglog(waveKE_wavelength,waveKE_glbl_signif, alpha=0.85,color=plt.cm.viridis(ci),lw=2,linestyle='--')
+
+
+        axs[0,di].set_xlabel('Wavelength [m]')
+        axs[1,di].set_xlabel('Wavelength [m]')
+        axs[2,di].set_xlabel('Wavelength [m]')
+        axs[0,di].set_ylabel('Power Spectral Density [m$^4$ s$^{-4}$]')
+        axs[0,di].legend()
+        axs[0,di].set_ylim([10**-2, 10**1])
+        axs[0,di].set_xlim([10**2, 10**5])
+        #axs[1].set_ylim([0, 10**-4])
+        #axs[2].set_ylim([10**-5, 10**-1])
+        axs[0,di].invert_xaxis()

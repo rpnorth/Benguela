@@ -62,8 +62,8 @@ def load_ctd_data(data_files):
                                 'Salinity': (['lon', 'lat', 'z'], ctd_cast.Salinity.values[np.newaxis,np.newaxis,:]),
                                 'O2': (['lon', 'lat', 'z'], ctd_cast.O2.values[np.newaxis,np.newaxis,:]),
                                 'Pressure': (['lon', 'lat', 'z'], ctd_cast.Pressure.values[np.newaxis,np.newaxis,:])},
-                                coords={'lon': (ctd_cast.longitude[...,np.newaxis]),
-                                        'lat': (ctd_cast.latitude[...,np.newaxis]),
+                                coords={'lon': (np.array(ctd_cast.longitude)[...,np.newaxis]),
+                                        'lat': (np.array(ctd_cast.latitude)[...,np.newaxis]),
                                         'station': (st_name[...,np.newaxis]),
                                         'time': np.array(pd.to_datetime(ctd_cast.time.values[0]-1, unit='D', origin=pd.Timestamp('01-01-2016')))[...,np.newaxis],
                                         'z': z}).stack(xy = ('lon','lat','station','time'))
@@ -273,6 +273,8 @@ def load_combine_ladcp_ctd_data(pathLADCP, pathCTD):
         # for plotting better if there is a coord option
         ctd_ladcp[ri] = ctd_ladcp[ri].assign_coords(x_km=ctd_ladcp[ri].distance/1000)
         ctd_ladcp[ri] = ctd_ladcp[ri].assign_coords(x_m=ctd_ladcp[ri].distance)
+        # and add as to multi-dimension (nned to reset in order to set it seems)
+        ctd_ladcp[ri] = ctd_ladcp[ri].reset_index('xy').set_index(xy=['x_m','x_km','lon','lat','station','time'])
         #dx = ctd_ladcp[ri].x_km.diff('xy').mean().values  !!! Taken care of by xarray
         #ctd_ladcp[ri] = ctd_ladcp[ri].assign_coords(x_km_shift=ctd_ladcp[ri].x_km) # for contour plot on pcolormesh
         #dz = ctd_ladcp[ri].z.diff('z').mean().values
