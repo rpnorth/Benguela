@@ -1,3 +1,37 @@
+def calc_KE(sadcp_transects):
+
+    # remove mean
+    sadcp_transects['u_prime']=sadcp_transects.u-sadcp_transects.u.mean(dim='xy')
+    sadcp_transects['v_prime']=sadcp_transects.v-sadcp_transects.v.mean(dim='xy')
+    sadcp_transects['across_prime']=sadcp_transects.across-sadcp_transects.across.mean(dim='xy')
+    sadcp_transects['along_prime']=sadcp_transects.along-sadcp_transects.along.mean(dim='xy')
+    
+    # calculate Kinetic Energy 
+    sadcp_transects['full_ke'] = 0.5*((sadcp_transects.u)**2+(sadcp_transects.v)**2) # m**2/s**2
+    sadcp_transects['eddy_ke'] = 0.5*((sadcp_transects.u_prime)**2+(sadcp_transects.v_prime)**2) # m**2/s**2
+
+    ## is this the velocity variance? as in Rocha et al. 2016?
+    #! what does "spec_est2" do in https://github.com/cesar-rocha/dp_spectra/blob/master/synthetic/aux_func.py ?
+    #    ! seems to be what Rocha describes on p 603
+    #    ! following https://github.com/cesar-rocha/dp_spectra/blob/master/synthetic/stochastic_spectra.ipynb 
+    #    ! also see use of spec.Spectrum in https://github.com/pyspec/pyspec/blob/master/examples/example_1d_spec.ipynb 
+    #! spec.Spectrum is basically what I did, but more in depth; use as simple, but double check results
+        #! results are similar, without Welch windowing, ie D=N
+    # now with across, along and using spec.Spectra
+    # why is divergent component so small - read papers on interpreting these plots
+    sadcp_transects['u_full_ke'] = 0.5*((sadcp_transects.u)**2) # m**2/s**2
+    sadcp_transects['v_full_ke'] = 0.5*((sadcp_transects.v)**2) # m**2/s**2
+    sadcp_transects['u_eddy_ke'] = 0.5*((sadcp_transects.u_prime)**2) # m**2/s**2
+    sadcp_transects['v_eddy_ke'] = 0.5*((sadcp_transects.v_prime)**2) # m**2/s**2
+
+    # rotate to get along-across track velocities
+    #sadcp_transects = sw.rotate_vel2across_along(sadcp_transects)
+    sadcp_transects['across_eddy_ke'] = 0.5*((sadcp_transects.across_prime)**2) # m**2/s**2
+    sadcp_transects['along_eddy_ke'] = 0.5*((sadcp_transects.along_prime)**2) # m**2/s**2
+    sadcp_transects['eddy_ke_track'] = 0.5*((sadcp_transects.across_prime)**2+(sadcp_transects.along_prime)**2) # m**2/s**2
+
+    return sadcp_transects
+
 #def calc_M2(sigma_in,distance_in,depth_in):
 #    import numpy as np
 #    # Horizontal Buoyancy Gradient 
@@ -57,10 +91,14 @@ def calc_vertical_vorticity(var_w_v_x_fo):
     # assuming m/s and m
     
     var_w_v_x_fo = calc_coriolis(var_w_v_x_fo)
-    
-    dv_dx  = var_w_v_x_fo.across_track_vel.diff('time') / var_w_v_x_fo.distance.diff('time') 
-    dv_dz  = var_w_v_x_fo.across_track_vel.diff('z') / var_w_v_x_fo.z.diff('z') 
 
+    if 'across_track_vel' in var_w_v_x_fo:
+        dv_dx  = var_w_v_x_fo.across_track_vel.diff('time') / var_w_v_x_fo.distance.diff('time') 
+        dv_dz  = var_w_v_x_fo.across_track_vel.diff('z') / var_w_v_x_fo.z.diff('z') 
+    else:
+        dv_dx  = var_w_v_x_fo.across.diff('time') / var_w_v_x_fo.x_m.diff('time') 
+        dv_dz  = var_w_v_x_fo.across.diff('z') / var_w_v_x_fo.z.diff('z') 
+        
     #% ====================
     #%  Vertical vorticity 
     #%  ====================
@@ -68,7 +106,8 @@ def calc_vertical_vorticity(var_w_v_x_fo):
     # from Adams et al. 2017, Equation 15
     # dependent on cross-front and vertical gradients in alongfront velocity and buoyancy
     # here, our across-track velocity = along-front velocity and cross-front gradient = x or distance
-    var_w_v_x_fo['Ertel_Potential_Vorticity'] = (var_w_v_x_fo.fo - dv_dx)*var_w_v_x_fo.db_dz + dv_dz*var_w_v_x_fo.db_dx
+    if 'db_dz' in var_w_v_x_fo and 'db_dx' in var_w_v_x_fo:
+        var_w_v_x_fo['Ertel_Potential_Vorticity'] = (var_w_v_x_fo.fo - dv_dx)*var_w_v_x_fo.db_dz + dv_dz*var_w_v_x_fo.db_dx
     
     #% vertical vort = dv/dx - du/dy
     #% estimate for now, across-track vel(in m/s) / along-track distance (m)

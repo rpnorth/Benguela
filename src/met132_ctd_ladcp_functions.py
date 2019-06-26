@@ -189,52 +189,70 @@ def load_combine_ladcp_ctd_data(pathLADCP, pathCTD):
     ladcp_data = load_ladcp_data(all_files)
 
     # create transects 
-    ind_LADCP_section, ind_CTD_section = list((1,1,1,1,1)), list((1,1,1,1,1))
+    ind_LADCP_section, ind_CTD_section = list((1,1,1,1,1,1,1,1,1)), list((1,1,1,1,1,1,1,1,1))
 
-    ind_LADCP_section[0] = np.logical_and(np.logical_and(np.logical_and(ladcp_data.lon.values > 11.5, ladcp_data.lon.values < 12.5), 
-                                                                          ladcp_data.lat.values < -26.25),
-                                                           ladcp_data.time.values < np.datetime64('2016-11-21T09:00:00'))
+    ind_LADCP_section[0] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-11-20T10:00:00'),ladcp_data.time.values <= np.datetime64('2016-11-21T07:00:00'))
     ind_LADCP_section[1] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(ladcp_data.lon.values > 11.5, ladcp_data.lon.values < 12.5), 
                                                                                     ladcp_data.lat.values < -26.25),
-                                                      ladcp_data.time.values < np.datetime64('2016-11-22T23:00:00')),
-                                       ladcp_data.time.values > np.datetime64('2016-11-21T09:00:00')) 
-    ind_LADCP_section[2] = np.logical_and(ladcp_data.time.values < np.datetime64('2016-12-02T03:30:00'),
-                                          ladcp_data.time.values > np.datetime64('2016-11-30T20:30:00')) 
-    ind_true = np.where(ind_LADCP_section[2])[0]
-    ind_LADCP_section[2][ind_true[6]] = False # CTD is missing for this station
+                                                      ladcp_data.time.values <= np.datetime64('2016-11-22T15:08:00')),
+                                       ladcp_data.time.values >= np.datetime64('2016-11-21T14:38:00')) 
+    # LADCP_CTD_Transect3
+    ind_LADCP_section[2] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-11-24T10:33:00'),ladcp_data.time.values <= np.datetime64('2016-11-24T23:30:00'))
     ind_LADCP_section[3] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ladcp_data.lon.values > 12.95, ladcp_data.lon.values < 13.25), 
                                       ladcp_data.lat.values < -25.9),
                                       ladcp_data.lat.values > -26.25),
-                                      ladcp_data.time.values > np.datetime64('2016-11-26T09:55:00')),
-                                      ladcp_data.time.values < np.datetime64('2016-11-27T02:30:00') )
-    ind_LADCP_section[4] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ladcp_data.lon.values > 12.5, ladcp_data.lon.values < 13.1), 
+                                      ladcp_data.time.values >= np.datetime64('2016-11-26T08:30:00')),
+                                      ladcp_data.time.values <= np.datetime64('2016-11-27T00:01:00') )
+    # LADCP_CTD_Transect5
+    ind_LADCP_section[4] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-11-27T18:22:00'),ladcp_data.time.values <= np.datetime64('2016-11-28T06:50:00'))
+    # no data available for Transect 6
+    #ind_LADCP_section[5] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-11-28T07:30:00'),ladcp_data.time.values <= np.datetime64('2016-11-28T19:00:00'))
+    ind_LADCP_section[5] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-11-30T21:05:00'),ladcp_data.time.values <= np.datetime64('2016-12-01T19:35:00')) 
+    ind_true = np.where(ind_LADCP_section[5])[0]
+    ind_LADCP_section[5][ind_true[6]] = False # CTD is missing for this station
+    ind_LADCP_section[6] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ladcp_data.lon.values > 12.5, ladcp_data.lon.values < 13.1), 
                                                         ladcp_data.lat.values < -26.15),
                                                         ladcp_data.lat.values > -26.5),
-                                                        ladcp_data.time.values > np.datetime64('2016-12-02T20:30:00')),
-                                                        ladcp_data.time.values < np.datetime64('2016-12-03T13:00:00')) 
+                                                        ladcp_data.time.values >= np.datetime64('2016-12-02T21:57:00')),
+                                                        ladcp_data.time.values <= np.datetime64('2016-12-03T07:35:00')) 
+    # LADCP_CTD_Transect9
+    ind_LADCP_section[7] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-12-05T13:35:00'),ladcp_data.time.values <= np.datetime64('2016-12-06T10:20:00')) 
+    ind_LADCP_section[8] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-12-07T10:07:00'),ladcp_data.time.values <= np.datetime64('2016-12-08T02:35:00')) 
 
-    ind_CTD_section[0] = np.logical_and(np.logical_and(np.logical_and(ctd_data.lon.values > 11.5, ctd_data.lon.values < 12.5), 
-                                                    ctd_data.lat.values < -26.25),
-                                     ctd_data.time.values < np.datetime64('2016-11-21T09:00:00'))
+    
+    # tried to get all transects, named in "0.MET132..."
+    ind_CTD_section[0] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-11-20T10:00:00'),ctd_data.time.values <= np.datetime64('2016-11-21T07:00:00'))
     ind_CTD_section[1] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(ctd_data.lon.values > 11.5, ctd_data.lon.values < 12.5), 
                                                                                     ctd_data.lat.values < -26.25),
-                                                      ctd_data.time.values < np.datetime64('2016-11-22T23:00:00')),
-                                       ctd_data.time.values > np.datetime64('2016-11-21T09:00:00')) 
-    ind_CTD_section[2] = np.logical_and(ctd_data.time.values < np.datetime64('2016-12-02T03:30:00'),
-                                          ctd_data.time.values > np.datetime64('2016-11-30T20:30:00')) 
+                                                      ctd_data.time.values <= np.datetime64('2016-11-22T15:08:00')),
+                                       ctd_data.time.values >= np.datetime64('2016-11-21T14:38:00')) 
+    # LADCP_CTD_Transect3
+    ind_CTD_section[2] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-11-24T10:33:00'),ctd_data.time.values <= np.datetime64('2016-11-24T23:30:00'))
+    ind_true = np.where(ind_CTD_section[2])[0]
+    ind_CTD_section[2][ind_true[5]] = False # LADCP is missing for this station
     ind_CTD_section[3] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ctd_data.lon.values > 12.95, ctd_data.lon.values < 13.25), 
                                                        ctd_data.lat.values < -25.9),
                                                        ctd_data.lat.values > -26.25),
-                                                       ctd_data.time.values > np.datetime64('2016-11-26T09:55:00')),
-                                                       ctd_data.time.values < np.datetime64('2016-11-27T02:30:00')) 
-    ind_CTD_section[4] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ctd_data.lon.values > 12.5, ctd_data.lon.values < 13.1), 
+                                                       ctd_data.time.values > np.datetime64('2016-11-26T08:30:00')),
+                                                       ctd_data.time.values < np.datetime64('2016-11-27T00:01:00')) 
+    # LADCP_CTD_Transect5
+    ind_CTD_section[4] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-11-27T17:43:00'),ctd_data.time.values <= np.datetime64('2016-11-28T06:45:00'))
+    #ind_CTD_section[5] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-11-28T07:30:00'),ctd_data.time.values <= np.datetime64('2016-11-28T19:00:00'))
+    ind_CTD_section[5] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-11-30T21:05:00'),ctd_data.time.values <= np.datetime64('2016-12-01T19:35:00')) 
+    ind_CTD_section[6] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ctd_data.lon.values > 12.5, ctd_data.lon.values < 13.1), 
                                                        ctd_data.lat.values < -26.15),
                                                        ctd_data.lat.values > -26.5),
-                                                       ctd_data.time.values > np.datetime64('2016-12-02T20:30:00')),
-                                                       ctd_data.time.values < np.datetime64('2016-12-03T13:00:00')) 
+                                                       ctd_data.time.values > np.datetime64('2016-12-02T21:57:00')),
+                                                       ctd_data.time.values < np.datetime64('2016-12-03T07:35:00')) 
+    # LADCP_CTD_Transect9
+    ind_CTD_section[7] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-12-05T13:35:00'),ctd_data.time.values <= np.datetime64('2016-12-06T10:20:00')) 
+    ind_CTD_section[8] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-12-07T10:07:00'),ctd_data.time.values <= np.datetime64('2016-12-08T02:35:00')) 
 
+
+    #print(ind_CTD_section[3],ind_LADCP_section[3])
+    #print(ladcp_data.time.values,ctd_data.time.values)
     # combine LADCP and CTD into one dataset
-    ctd_ladcp = list((1,1,1,1,1))
+    ctd_ladcp = list((1,1,1,1,1,1,1,1,1))
     for ri in range(len(ind_CTD_section)):
         ctd_test = ctd_data.isel(xy=ind_CTD_section[ri])
         ladcp_test = ladcp_data.isel(xy=ind_LADCP_section[ri])
@@ -243,7 +261,7 @@ def load_combine_ladcp_ctd_data(pathLADCP, pathCTD):
 
         # get same z coords too, before merging; using ladcp which has bigger spacing
         ctd_test = ctd_test.interp(z=ladcp_test.z)
-        #print(ctd_test,ladcp_test)
+        #print(ri,ctd_test,ladcp_test)
         
         # time/position of each cast may differ between ladcp and ctd, but referring to the same cast; so set to consistent times/positions
         ctd_test = ctd_test.reset_index('xy') # need to separate out 'time'
