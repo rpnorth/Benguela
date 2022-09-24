@@ -1,3 +1,5 @@
+import matplotlib.pyplot as plt
+
 def grid_scanfish_wrapper(cast_as_ds,dx=500,dz=10,d_factor=500):
     import glob
     import os
@@ -10,20 +12,34 @@ def grid_scanfish_wrapper(cast_as_ds,dx=500,dz=10,d_factor=500):
     #d_factor = 500
     #dx = 300 # m
     #dz = 5 # m
-    xi,yi,ti,CT_grid,cast_as_ds_corrected =      gridding_scanfish_data(cast_as_ds,varname='CT',     dx=dx/d_factor,dz=dz,d_factor=d_factor)
-    xi,yi,ti,SA_grid,cast_as_ds_corrected =      gridding_scanfish_data(cast_as_ds,varname='SA',     dx=dx/d_factor,dz=dz,d_factor=d_factor)
-    # xi,yi,sigma_0_grid,cast_as_ds_corrected = gridding_scanfish_data(cast_as_ds,varname='sigma_0',dx=dx/d_factor,dz=dz,d_factor=d_factor)
+    xi,yi,ti,CT_grid,cast_as_ds_corrected =      gridding_scanfish_data(cast_as_ds,varname='CT',
+                                                                        dx=dx/d_factor,dz=dz,d_factor=d_factor)
+    xi,yi,ti,SA_grid,cast_as_ds_corrected =      gridding_scanfish_data(cast_as_ds,varname='SA',
+                                                                        dx=dx/d_factor,dz=dz,d_factor=d_factor)
+    xi,yi,ti,fluor_grid,cast_as_ds_corrected =      gridding_scanfish_data(cast_as_ds,varname='fluor',
+                                                                           dx=dx/d_factor,dz=dz,d_factor=d_factor)
+    xi,yi,ti,o2_grid,cast_as_ds_corrected =      gridding_scanfish_data(cast_as_ds,varname='o2',
+                                                                        dx=dx/d_factor,dz=dz,d_factor=d_factor)
     p_ref     = 10.1325; # reference pressure # following scanfish calc
     Pot_dens  = gsw.rho(SA_grid,CT_grid,p_ref)
     sigma_0_grid   = Pot_dens - 1000;
-
+    
+    # get correct dimensions to match sadcp
+    CT_grid = np.transpose(CT_grid)
+    SA_grid = np.transpose(SA_grid)
+    sigma_0_grid = np.transpose(sigma_0_grid)
+    fluor_grid = np.transpose(fluor_grid)
+    o2_grid = np.transpose(o2_grid)
+    xi = np.transpose(xi)
+    
     # convert to Dataset
-    gridded_as_ds = xr.Dataset({'CT': (['z', 'time'], CT_grid ),'SA': (['z', 'time'], SA_grid ),'sigma_0': (['z', 'time'], sigma_0_grid )},
-                               coords={'distance':(['z', 'time'], xi ),'z': (['z'], yi[:,0] ),'time':(['time'], ti[0,:] )})
+    gridded_as_ds = xr.Dataset({'CT': (['time','z' ], CT_grid ),'SA': (['time','z'], SA_grid ),'sigma_0': (['time','z'], sigma_0_grid ),
+                               'fluor': (['time','z'], fluor_grid ),'o2': (['time','z'], o2_grid )},
+                               coords={'distance':(['time','z'], xi ),'z': (['z'], yi[:,0] ),'time':(['time'], ti[0,:] )})
     
     return gridded_as_ds, cast_as_ds_corrected
 
-def load_process_scanfish_data(pathData):
+def load_process_scanfish_data_as_DS(pathData):
     import glob
     import os
     import numpy as np
@@ -35,12 +51,14 @@ def load_process_scanfish_data(pathData):
     #pathData = r'/Users/North/Drive/Work/UniH_Work/DataAnalysis/Data/MET_132/Scanfish/'                     # use your path
     data_files = glob.glob(os.path.join(pathData, "Scanfish_complete_cast*.nc"))     # advisable to use os.path.join as this makes concatenation OS independent
     #from scanfish_functions import gridding_scanfish_data
-
-    scanfish_data, scanfish_gridded= [], []
-    for ti,f in zip(range(len(data_files[0:3:2])),data_files[0:3:2]): # skipping second transect as it doesn't cross filament
+    scanfish_data = []
+    #for ti,f in zip(range(len(data_files[0:3:2])),data_files[0:3:2]): # skipping second transect as it doesn't cross filament
+    for ti,f in zip(range(len(data_files)),data_files): # sometimes file order is off, changed filename of 2nd transect so it's not here
         cast_as_ds = xr.open_dataset(f,decode_times=False)
         # Convert time axis to date form:
         cast_as_ds.time.values = pd.to_datetime(cast_as_ds.time.values-719529, unit='D') #[datetime.utcfromtimestamp(i) for i in cast_as_ds.time.values]
+        #print('Cast as DS')
+        #print(cast_as_ds)
 
         # rough check for outliers; problem seems to be with near-zero values
         cast_as_ds['CT'] = cast_as_ds.CT.where(cast_as_ds.CT>1)
@@ -49,27 +67,29 @@ def load_process_scanfish_data(pathData):
         # seems easier if time is a dim/coord
         cast_as_ds = cast_as_ds.swap_dims({'x': 'time'})
 
-        # use scipy.interpolate.Rbf to interpolate to grid; use d_factor to put more weight on values on x-axis, and not z-axis
-        #d_factor = 500
-        #dx = 500 # m
-        #dz = 10 # m
-        xi,yi,ti,CT_grid,cast_as_ds_corrected =      gridding_scanfish_data(cast_as_ds,varname='CT',     skip = -1) # just getting cast_as_ds_corrected
-        # xi,yi,ti,CT_grid,cast_as_ds_corrected =      gridding_scanfish_data(cast_as_ds,varname='CT',     dx=dx/d_factor,dz=dz,d_factor=d_factor)
-        #xi,yi,ti,SA_grid,cast_as_ds_corrected =      gridding_scanfish_data(cast_as_ds,varname='SA',     dx=dx/d_factor,dz=dz,d_factor=d_factor)
-        ## xi,yi,sigma_0_grid,cast_as_ds_corrected = gridding_scanfish_data(cast_as_ds,varname='sigma_0',dx=dx/d_factor,dz=dz,d_factor=d_factor)
-        #p_ref     = 10.1325; # reference pressure # following scanfish calc
-        #Pot_dens  = gsw.rho(SA_grid,CT_grid,p_ref);
-        #sigma_0_grid   = Pot_dens - 1000;
+        # 2. Fix lat/lon which don't seem to sample at the same frequency as sensors
+        ind_goodlons_lats = np.append(True,np.logical_or(np.diff(cast_as_ds.lon.values) != 0,np.diff(cast_as_ds.lat.values) != 0)) # add true to include 1st value
+        ind_goodlons_lats[-1] = True # set last to true to avoid nan
+        # interpolate across the nan's created using where:
+        temp_data = cast_as_ds.where(ind_goodlons_lats).interpolate_na(dim='time') 
 
-        # convert to Dataset
-        #gridded_as_ds = xr.Dataset({'CT': (['z', 'x'], CT_grid ),'SA': (['z', 'x'], SA_grid ),'sigma_0': (['z', 'x'], sigma_0_grid )},
-        #                            coords={'distance':(['z', 'x'], xi ),'depth': (['z', 'x'], yi ),'time':(['z', 'x'], ti )})
+        # create ds that will have correct lat,lon, and all the rest of the data as original
+        scanfish_correct = cast_as_ds
+        # but use corrected lat,lon
+        scanfish_correct['lon'] = temp_data.lon # use "fixed" lat/lon values
+        scanfish_correct['lat'] = temp_data.lat
+        # and check for nan in variables of interest
+        scanfish_correct['CT'] = scanfish_correct['CT'].interpolate_na(dim='time')
+        scanfish_correct['SA'] = scanfish_correct['SA'].interpolate_na(dim='time')
+        scanfish_correct['o2'] = scanfish_correct['o2'].interpolate_na(dim='time')
+        scanfish_correct['fluor'] = scanfish_correct['fluor'].interpolate_na(dim='time')
 
+        scanfish_correct['distance'] = np.cumsum(np.append(np.array(0),gsw.distance(scanfish_correct.lon.values,scanfish_correct.lat.values,p=0)))
+        #print(scanfish_correct.time)
         # create a list of transects; shortcut instead of concat datasets
-        #scanfish_gridded.append(gridded_as_ds) #
-        scanfish_data.append(cast_as_ds_corrected) #
+        scanfish_data.append(scanfish_correct) #
         
-    return scanfish_data # scanfish_gridded,
+    return scanfish_data 
 
     
 def gridding_scanfish_data(scanfish_data,varname='CT',dt='950400000ns',dx=None,dz=None,d_factor=500,skip=10):
@@ -81,28 +101,9 @@ def gridding_scanfish_data(scanfish_data,varname='CT',dt='950400000ns',dx=None,d
     import gsw
     from scipy.interpolate import Rbf
 
-    # 2. Fix lat/lon which don't seem to sample at the same frequency as sensors
-    ind_goodlons_lats = np.append(True,np.logical_or(np.diff(scanfish_data.lon.values) != 0,np.diff(scanfish_data.lat.values) != 0)) # add true to include 1st value
-    ind_goodlons_lats[-1] = True # set last to true to avoid nan
-
-    # create a ds to interpolate through bad lat/lon values
-    # set duplicate coords to nan, drop nan, then interpolate back to original timestamps
-    # scanfish_data.time.diff(dim='time').mean() = 1006462390 = 1 second = 1e9 ns rounded
-    # 950400000ns seems to be the only value that works ????
-    # only want to set nan to lat, lon. So first setup temp datset:
-    #temp_data = scanfish_data.where(ind_goodlons_lats).dropna(dim='time').resample(time=dt).interpolate('linear')
-    # just need to interpolate across the nan's created using where:
-    temp_data = scanfish_data.where(ind_goodlons_lats).interpolate_na(dim='time') 
-
-    # create ds that will have correct lat,lon, and all the rest of the data as original
-    scanfish_correct = scanfish_data
-    # but use corrected lat,lon
-    scanfish_correct['lon'] = temp_data.lon # use "fixed" lat/lon values
-    scanfish_correct['lat'] = temp_data.lat
-    # and check for nan in variable of interest
-    scanfish_correct[varname] = scanfish_correct[varname].interpolate_na(dim='time')
-
-    scanfish_correct['distance'] = np.cumsum(np.append(np.array(0),gsw.distance(scanfish_correct.lon.values,scanfish_correct.lat.values,p=0)))
+    # new distance variable starting at zero for this section
+    #print(scanfish_data)
+    scanfish_data['distance'] = np.cumsum(np.append(np.array(0),gsw.distance(scanfish_data.lon.values,scanfish_data.lat.values,p=0)))
     
     #Scaling:
     #    if different X coordinates measure different things, Euclidean distance
@@ -110,29 +111,26 @@ def gridding_scanfish_data(scanfish_data,varname='CT',dt='950400000ns',dx=None,d
     #    but X1 0 to 1000, the X1 distances will swamp X0;
     #    rescale the data, i.e. make X0.std() ~= X1.std() .
     # https://stats.stackexchange.com/questions/46429/transform-data-to-desired-mean-and-standard-deviation
-    #scanfish_correct['distance_scaled'] = scanfish_correct.depth.mean() + 
-    #                                        (scanfish_correct.distance - scanfish_correct.distance.mean())*scanfish_correct.depth.std()/scanfish_correct.distance.std()
-    #d_factor = 500
-    scanfish_correct['distance_scaled'] = scanfish_correct.distance/d_factor #
+    scanfish_data['distance_scaled'] = scanfish_data.distance/d_factor #
     
     # setup new grid to be interpolated onto
-    if dx is None: dx = 300/d_factor# 100*abs(scanfish_correct.distance_scaled.diff(dim='distance').mean().round())
-    if dz is None: dz = 5 #10*abs(scanfish_correct.depth.diff(dim='time').mean().round(4))
-    x_grid = np.arange(scanfish_correct.distance_scaled.min(),scanfish_correct.distance_scaled.max(),dx)
-    #dx_grid = np.arange(scanfish_correct.distance.min(),scanfish_correct.distance.max(),dx)/1000
-    #dz_grid = np.arange(scanfish_correct.depth.min(),scanfish_correct.depth.max(),dz)
-    z_grid = np.arange(-150,-5,dz)
+    if dx is None: dx = 300/d_factor
+    if dz is None: dz = 5 
+    x_grid = np.arange(scanfish_data.distance_scaled.min(),scanfish_data.distance_scaled.max(),dx)
+    #z_grid = np.arange(-150,-5,dz)
+    # !! to maximize number of ADCP values, with dz=4 or 8
+    z_grid = np.arange(-153.55,0,dz)
     XI, YI = np.meshgrid(x_grid, z_grid)
 
     if skip > 0: # option to skip this part
         # use RBF; epsilon seems to be the only option, higher values give strange output
-        rbf = Rbf(scanfish_correct.distance_scaled[::skip].values, scanfish_correct.depth[::skip].values, scanfish_correct[varname][::skip].values, epsilon=1)
+        rbf = Rbf(scanfish_data.distance_scaled[::skip].values, scanfish_data.depth[::skip].values, scanfish_data[varname][::skip].values, epsilon=1)
         CT_grid = rbf(XI, YI)
 
         # determine equivalent timestamp
         # based on https://stackoverflow.com/questions/31212141/how-to-resample-a-df-with-datetime-index-to-exactly-n-equally-sized-periods
-        ntimesteps = len(scanfish_correct.time)
-        time_vec = pd.DataFrame(np.ones(ntimesteps), scanfish_correct.time.values)
+        ntimesteps = len(scanfish_data.time)
+        time_vec = pd.DataFrame(np.ones(ntimesteps), scanfish_data.time.values)
         first = time_vec.index.min()
         last = time_vec.index.max() + pd.Timedelta('1s')
         n = len(x_grid) #
@@ -147,11 +145,11 @@ def gridding_scanfish_data(scanfish_data,varname='CT',dt='950400000ns',dx=None,d
     #T_range = np.array((15,18)) #sst_range
     #plt.subplot(2, 1, 1)
     #plt.pcolor(XI*d_factor, YI, CT_grid, cmap=plt.cm.jet,vmin=T_range[0],vmax=T_range[1])
-    #plt.scatter(scanfish_correct.distance, scanfish_correct.depth, 15, scanfish_correct.CT, cmap=plt.cm.jet,vmin=T_range[0],vmax=T_range[1])
+    #plt.scatter(scanfish_data.distance, scanfish_data.depth, 15, scanfish_data.CT, cmap=plt.cm.jet,vmin=T_range[0],vmax=T_range[1])
     #plt.colorbar()
-    #plt.scatter(scanfish_correct.distance, scanfish_correct.depth, 15)
+    #plt.scatter(scanfish_data.distance, scanfish_data.depth, 15)
     
-    return XI*d_factor, YI, TI, CT_grid, scanfish_correct
+    return XI*d_factor, YI, TI, CT_grid, scanfish_data
 
 def load_combine_sadcp_scanfish_data(fileSADCP, pathScan, grid_dx = 750, grid_dz = 10):
     import os
@@ -160,7 +158,189 @@ def load_combine_sadcp_scanfish_data(fileSADCP, pathScan, grid_dx = 750, grid_dz
     import xarray as xr
     import pandas as pd
     import numpy as np
+    import Denmark_Strait.src.spectra_and_wavelet_functions as sw
+    #from . import met132_calc_functions as cf
+    from collections import OrderedDict
+    #from scanfish_sadcp_functions import load_process_scanfish_data
+    
+    # load SADCP data
+    sadcp = xr.open_dataset(fileSADCP)
+    #sadcp['distance'] =  xr.DataArray(np.append(np.array(0),gsw.distance(sadcp.lon, sadcp.lat,p=0)),dims='time')
+    sadcp['x_m'] =  xr.DataArray(np.cumsum(np.append(np.array(0),gsw.distance(sadcp.lon.values, sadcp.lat.values,p=0))),dims='time')
+    # rotate to get along-across track velocities
+    sadcp = sw.rotate_vel2across_along(sadcp)
+    # get z instead of depth
+    sadcp['z'] = -1*sadcp.depth[0,:]
+    sadcp = sadcp.swap_dims({'depth_cell': 'z'})#.drop('depth_cell')
+    # fill all nan using linear interpolation along time axis; don't need for Scanfish as it will be gridded
+    sadcp = sadcp.interpolate_na(dim='time')
+    
+    # load Scanfish data
+    scanfish_data = load_process_scanfish_data_as_DS(pathScan)
+    
+    def sadcp_select(sadcp,ind_SADCP_section):
+        # This method ensures uniform dx, but loses time information; see sadcp_scanfish_combine for the other option
+        sadcp_out = sadcp.isel(time=ind_SADCP_section)
+        # to preserve some time information, as "time" variable is lost with interpolation
+        sadcp_out = sadcp_out.assign_coords(time_secs=sadcp_out.time.astype(int))
+        # make x_m the dimesion
+        sadcp_out = sadcp_out.swap_dims({'time': 'x_m'}) 
+        
+        # get rid of duplicates        
+        lat_lon = np.column_stack((sadcp_out.lat.dropna(dim='x_m'), sadcp_out.lon.dropna(dim='x_m')))
+        _, index = np.unique(lat_lon, axis=0,  return_index=True)
+        sadcp_out = sadcp_out.isel(x_m=np.sort(index))
+
+        # need distance variable starting at 0m to get interpolation right
+        new_dx_m = gsw.distance(sadcp_out.lon.dropna(dim='x_m').values,
+                                sadcp_out.lat.dropna(dim='x_m').values,p=0)
+        new_x_m = np.cumsum((np.append(np.array(0),new_dx_m)))
+        sadcp_out = sadcp_out.assign_coords(x_m=new_x_m)
+        #from IPython.core.debugger import set_trace
+        #set_trace()
+        
+        # interp to even spacing
+        if sadcp_out.x_m.diff(dim='x_m').max() > 700:
+            dx_sadcp = 1000
+        else:
+            dx_sadcp = 500 
+        print('Setting dx to: ' , dx_sadcp , ' m')
+        sadcp_out = sadcp_out.interp(x_m=np.arange(0,sadcp_out.x_m.max(),dx_sadcp))
+        
+        # rebuild time
+        sadcp_out = sadcp_out.assign_coords(time=sadcp_out.time_secs.astype('datetime64[ns]'))
+        
+        sadcp_out = sadcp_out.rename({'x_m': 'xy'})
+        sadcp_out.coords['x_m'] = sadcp_out.xy
+        #sadcp_out = sadcp_out.assign_coords(x_km=sadcp_out.x_m/1000)
+        sadcp_out = sadcp_out.set_index(xy=['x_m','lat','lon','time','time_secs'])
+        
+        return sadcp_out
+    
+    # function to combine selected section
+    def sadcp_scanfish_combine(sadcp,scanfish_data,ind_SADCP_section,ind_scanfish_section,grid_dx,grid_dz):
+        
+        # create gridded scanfish data for selected sections
+        # !!! This is somewhat unreliable, as lon/lat aren't consistent (missing data) but are necessary for distance calc !!!
+        scanfish_gridded_section, scanfish_data_section = (grid_scanfish_wrapper(scanfish_data.drop('distance').
+                                                                                 isel(time=ind_scanfish_section),
+                                                                                 dx = grid_dx, dz = grid_dz))
+
+        # combine SADCP and Scanfish into one dataset; get similar variable and time and z variables
+        sadcp_test = sadcp.isel(time=ind_SADCP_section)
+        scanfish_gridded_section = scanfish_gridded_section.sortby('z', ascending=False) # first sort scanfish from surface to bottom
+        sadcp_test = sadcp_test.sortby('z', ascending=False) # first sort sadcp from surface to bottom
+        sadcp_test = sadcp_test.interp_like(scanfish_gridded_section)
+
+        # merge along time axis
+        scan_sadcp = xr.merge([sadcp_test,scanfish_gridded_section])
+        # Pressure may be needed
+        #scan_sadcp = scan_sadcp.assign_coords(Pressure=scan_sadcp.z) # to get right dims
+        scan_sadcp = scan_sadcp.assign_coords({"Pressure": ("z", gsw.p_from_z(scan_sadcp.z,scan_sadcp.lat.mean()))})
+        #scan_sadcp.Pressure.values = gsw.p_from_z(scan_sadcp.z,scan_sadcp.lat.mean())
+
+        # get distance starting at 0, from lat lon positions
+        scan_sadcp['x_m_full'] = scan_sadcp['x_m']
+        scan_sadcp['x_m'].values = np.cumsum(np.trunc(np.append(np.array(0),gsw.distance(scan_sadcp.lon.dropna(dim='time').values, 
+                                                                                    scan_sadcp.lat.dropna(dim='time').values,p=0))))
+
+        # now interpolate to uniform x-spacing instead of time, as this is more useful in this analysis
+        # now get to correct x-spacing, because result from scanfish gridding is not reliable
+        new_time_grid = pd.to_datetime(np.interp(np.arange(0,scan_sadcp.x_m.max(),grid_dx),
+                                                 scan_sadcp.x_m.values,pd.to_datetime(scan_sadcp.time.values).astype(int))) 
+        scan_sadcp = scan_sadcp.interp(time=new_time_grid).drop('distance')
+        # will have changed slightly, so need to redo
+        scan_sadcp['x_m'].values = np.cumsum(np.trunc(np.append(np.array(0),gsw.distance(scan_sadcp.lon.dropna(dim='time').values,  
+                                                                                    scan_sadcp.lat.dropna(dim='time').values,p=0))))
+        
+        # to create multi-index without losing time information; rename to associate all variables with xy instead of time
+        scan_sadcp = scan_sadcp.swap_dims({'time': 'x_m'}) 
+        scan_sadcp = scan_sadcp.rename({'x_m': 'xy'})
+        scan_sadcp.coords['x_m'] = scan_sadcp.xy
+        scan_sadcp = scan_sadcp.assign_coords(time_secs=scan_sadcp.time.astype(int))
+        scan_sadcp = scan_sadcp.set_index(xy=['x_m','lat','lon','time','time_secs'])
+        
+        return scan_sadcp
+    
+    ind_SADCP_section, ind_SADCP_section2, ind_scanfish_section = list((1,1)), list((1,1)), list((1,1))
+
+    ind_scanfish_section[0] = np.logical_and(scanfish_data[0].time.values >= np.datetime64('2016-11-18T08:22:05'),
+                                             scanfish_data[0].time.values <= np.datetime64('2016-11-18T18:24:26'))
+    ind_SADCP_section[0] = np.logical_and(sadcp.time.values >= np.datetime64('2016-11-18T08:22:05'),
+                                          sadcp.time.values <= np.datetime64('2016-11-18T18:24:26'))
+    ind_scanfish_section[1] = np.logical_and(scanfish_data[1].time.values >= np.datetime64('2016-11-19T12:57:04'),
+                                             scanfish_data[1].time.values <= np.datetime64('2016-11-20T04:23:51'))
+    ind_SADCP_section[1] = np.logical_and(sadcp.time.values >= np.datetime64('2016-11-19T12:57:04'),
+                                          sadcp.time.values <= np.datetime64('2016-11-20T04:23:51'))
+
+    
+    scan_sadcp_out = list((1,1))
+    scan_sadcp_out[0] = sadcp_scanfish_combine(sadcp,scanfish_data[0],ind_SADCP_section[0],ind_scanfish_section[0],grid_dx,grid_dz)
+    
+    scan_sadcp_out[1] = sadcp_scanfish_combine(sadcp,scanfish_data[1],ind_SADCP_section[1],ind_scanfish_section[1],grid_dx,grid_dz)
+    
+    sadcp_outOD = OrderedDict() # Preallocate output dictionary
+    sadcp_outOD['ScanTransect1'] = sadcp_select(sadcp,ind_SADCP_section[0])
+    sadcp_outOD['ScanTransect2'] = sadcp_select(sadcp,ind_SADCP_section[1])
+    sadcp_outOD['LADCP_CTD_Transect1'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-11-20T10:00:00'),
+                                                                           sadcp.time.values <= np.datetime64('2016-11-21T07:00:00')))
+    
+    sadcp_outOD['LADCP_CTD_Transect2'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-11-21T14:38:00'),
+                                                                           sadcp.time.values <= np.datetime64('2016-11-22T15:08:00')))
+    
+    sadcp_outOD['LADCP_CTD_Transect3'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-11-24T10:33:00'),
+                                                                           sadcp.time.values <= np.datetime64('2016-11-24T23:30:00')))
+    
+    sadcp_outOD['LADCP_CTD_Transect4'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-11-26T08:30:00'),
+                                                                           sadcp.time.values <= np.datetime64('2016-11-27T00:01:00')))
+    
+    sadcp_outOD['LADCP_CTD_Transect5'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-11-27T17:43:00'),
+                                                                           sadcp.time.values <= np.datetime64('2016-11-28T06:45:00')))
+
+    ## problem with interpolation, just removing for now
+    #print(sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-11-30T22:00:00'), 
+    #                                                                       sadcp.time.values <= np.datetime64('2016-12-01T21:00:00'))))
+    
+    sadcp_outOD['LADCP_CTD_Transect7'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-11-30T21:05:00'), 
+                                                                           sadcp.time.values <= np.datetime64('2016-12-01T21:35:00')))
+
+    sadcp_outOD['LADCP_CTD_Transect8'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-12-02T21:57:00'),
+                                                                           sadcp.time.values <= np.datetime64('2016-12-03T07:35:00')))
+    
+    sadcp_outOD['LADCP_CTD_Transect9'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-12-05T13:35:00'),
+                                                                           sadcp.time.values <= np.datetime64('2016-12-06T10:20:00')))
+    
+    sadcp_outOD['LADCP_CTD_Transect10'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-12-07T10:07:00'),
+                                                                            sadcp.time.values <= np.datetime64('2016-12-08T02:35:00')))
+    
+    sadcp_outOD['FullScanTransect1'] =   sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-11-17T18:22:07'),
+                                                                           sadcp.time.values <= np.datetime64('2016-11-18T21:02:00')))
+    
+    sadcp_outOD['AcrossUpwelling1'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-11-25T07:10:00'),
+                                                                        sadcp.time.values <= np.datetime64('2016-11-25T13:00:00')))
+    sadcp_outOD['WestwardFromUpwellTransect1'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-11-27T05:02:00'),
+                                                                                   sadcp.time.values <= np.datetime64('2016-11-27T17:32:00')))
+    sadcp_outOD['AcrossFilament1'] =   sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-11-29T09:30:00'),
+                                                                         sadcp.time.values <= np.datetime64('2016-11-29T15:20:00')))
+
+    sadcp_outOD['AwayFromFilament1'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-11-29T17:52:00'),
+                                                                         sadcp.time.values <= np.datetime64('2016-11-30T02:30:00')))
+    sadcp_outOD['ToCapetown1'] = sadcp_select(sadcp,np.logical_and(sadcp.time.values >= np.datetime64('2016-12-08T04:00:00'),
+                                                                   sadcp.time.values <= np.datetime64('2016-12-09T10:00:00')))
+
+    return scan_sadcp_out,scanfish_data, sadcp_outOD, sadcp
+
+
+
+def xxOLD_load_combine_sadcp_scanfish_data(fileSADCP, pathScan, grid_dx = 750, grid_dz = 10):
+    import os
+    import glob
+    import gsw
+    import xarray as xr
+    import pandas as pd
+    import numpy as np
     from . import met132_calc_functions as cf
+    from collections import OrderedDict
     #from scanfish_sadcp_functions import load_process_scanfish_data
     
     # load SADCP data
@@ -196,7 +376,8 @@ def load_combine_sadcp_scanfish_data(fileSADCP, pathScan, grid_dx = 750, grid_dz
                                                             scanfish_data[1].time.values <= sadcp.time.sel(time=np.datetime64('2016-11-20T04:30:00'),method='nearest').values),
                                              scanfish_data[1].time.values >= sadcp.time.sel(time=np.datetime64('2016-11-19T13:30:00'), method='nearest').values)
 
-    scanfish_gridded_section, scanfish_data_section, scan_sadcp, sadcp_out= list((1,1)),list((1,1)),list((1,1)), list((1,1))
+    scanfish_gridded_section, scanfish_data_section, scan_sadcp, sadcp_out = list((1,1)),list((1,1)),list((1,1)),list((1,1))
+    sadcp_outOD = OrderedDict() # Preallocate output dictionary
     for ri in range(len(ind_scanfish_section)):
         
         # create gridded scanfish data for selected sections
@@ -273,7 +454,13 @@ def load_combine_sadcp_scanfish_data(fileSADCP, pathScan, grid_dx = 750, grid_dz
                                                                                                sadcp_out[ri].lat.dropna(dim='time').values,p=0))))
         sadcp_out[ri] = sadcp_out[ri].rename({'distance': 'x_m'})
         sadcp_out[ri] = sadcp_out[ri].swap_dims({'time': 'x_m'}) 
-        dx_sadcp = 300 # for the two transects, dx is currently < 300, so 300 seems acceptable
+        #print(sadcp_out[ri].x_m.diff(dim='x_m').mean(),sadcp_out[ri].x_m.diff(dim='x_m').max(),sadcp_out[ri].x_m.diff(dim='x_m').min())
+        if ri == 0:
+            if sadcp_out[ri].x_m.diff(dim='x_m').max() > 700:
+                dx_sadcp = 1000
+            else:
+                dx_sadcp = 500 #sadcp_out[ri].x_m.diff(dim='x_m').max().round(-2).values #300 # for the two transects, dx is currently < 300, so 300 seems acceptable
+            print('Setting dx to: ' , dx_sadcp , ' m')
         new_time2 = pd.to_datetime(np.interp(np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp),
                                             sadcp_out[ri].x_m.values,pd.to_datetime(sadcp_out[ri].time.values).astype(int))) 
         sadcp_out[ri] = sadcp_out[ri].interp(x_m=np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp))
@@ -285,18 +472,136 @@ def load_combine_sadcp_scanfish_data(fileSADCP, pathScan, grid_dx = 750, grid_dz
         sadcp_out[ri] = sadcp_out[ri].assign_coords(x_km=sadcp_out[ri].x_m/1000)
         sadcp_out[ri] = sadcp_out[ri].set_index(xy=['x_m','x_km','lat','lon','time','time_secs'])
 
+        sadcp_outOD['ScanTransect{}'.format(ri+1)]  = sadcp_out[ri] # quickest way to change output to Ordered Dict
         
-        #scan_sadcp[ri] = scan_sadcp[ri].stack(xy = ('x_m','x_km','lon','lat','time')) #set_index(xy=['x_m','x_km','lon','lat','time'])
-        #scan_sadcp[ri] = scan_sadcp[ri].set_index(xy=['x_m','x_km','lon','lat','time'])#.rename({'x_m': 'xy'})
-        #scan_sadcp[ri] = scan_sadcp[ri].rename({'time': 'xy'})
-        #scan_sadcp[ri].coords['time'] = scan_sadcp[ri].xy
-        #scan_sadcp[ri] = scan_sadcp[ri].set_index(xy=['x_m','x_km','lat','lon','time'])
 
-
+    # more transects, sadcp only
+    ri = 0    
+    sadcp_out[ri] = sadcp.sel(time=slice(np.datetime64('2016-11-17T18:22:07'),np.datetime64('2016-11-18T21:02:00')))
+    sadcp_out[ri]['z'] = -1*sadcp_out[ri].depth[0,:]
+    sadcp_out[ri] = sadcp_out[ri].swap_dims({'depth_cell': 'z'})
+         
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(lon=sadcp_out[ri].lon)
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(lat=sadcp_out[ri].lat)
+    sadcp_out[ri].distance.values = np.cumsum(np.trunc(np.append(np.array(0),gsw.distance(sadcp_out[ri].lon.dropna(dim='time').values,  
+                                                                                               sadcp_out[ri].lat.dropna(dim='time').values,p=0))))
+    sadcp_out[ri] = sadcp_out[ri].rename({'distance': 'x_m'})
+    sadcp_out[ri] = sadcp_out[ri].swap_dims({'time': 'x_m'}) 
+    new_time2 = pd.to_datetime(np.interp(np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp),
+                                         sadcp_out[ri].x_m.values,pd.to_datetime(sadcp_out[ri].time.values).astype(int))) 
+    sadcp_out[ri] = sadcp_out[ri].interp(x_m=np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp))
+    sadcp_out[ri].coords['time'] = sadcp_out[ri].x_m
+    sadcp_out[ri]['time'].values = new_time2.values
+    sadcp_out[ri] = sadcp_out[ri].rename({'x_m': 'xy'})
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(x_m=sadcp_out[ri].xy)
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(time_secs=sadcp_out[ri].time.astype(int))
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(x_km=sadcp_out[ri].x_m/1000)
+    sadcp_out[ri] = sadcp_out[ri].set_index(xy=['x_m','x_km','lat','lon','time','time_secs'])
         
-        #Rib_range = [0,0.25]
-        #scan_sadcp[ri].Rib.T.plot(vmin=Rib_range[0],vmax=Rib_range[1])
-        #vort_range = [-0.0005,0.0005]
-        #scan_sadcp[ri].absolute_vorticity.T.plot(vmin=vort_range[0],vmax=vort_range[1],cmap=plt.cm.coolwarm)
+    sadcp_outOD['FullScanTransect{}'.format(ri+1)] = sadcp_out[ri]
+    
+    # transect near upwelling, not straight line
+    sadcp_out[ri] = sadcp.sel(time=slice(np.datetime64('2016-11-25T07:10:00'),np.datetime64('2016-11-25T13:00:00')))
+    sadcp_out[ri]['z'] = -1*sadcp_out[ri].depth[0,:]
+    sadcp_out[ri] = sadcp_out[ri].swap_dims({'depth_cell': 'z'})
+        
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(lon=sadcp_out[ri].lon)
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(lat=sadcp_out[ri].lat)
+    sadcp_out[ri].distance.values = np.cumsum(np.trunc(np.append(np.array(0),gsw.distance(sadcp_out[ri].lon.dropna(dim='time').values,  
+                                                                                               sadcp_out[ri].lat.dropna(dim='time').values,p=0))))
+    sadcp_out[ri] = sadcp_out[ri].rename({'distance': 'x_m'})
+    sadcp_out[ri] = sadcp_out[ri].swap_dims({'time': 'x_m'}) 
+    new_time2 = pd.to_datetime(np.interp(np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp),
+                                         sadcp_out[ri].x_m.values,pd.to_datetime(sadcp_out[ri].time.values).astype(int))) 
+    sadcp_out[ri] = sadcp_out[ri].interp(x_m=np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp))
+    sadcp_out[ri].coords['time'] = sadcp_out[ri].x_m
+    sadcp_out[ri]['time'].values = new_time2.values
+    sadcp_out[ri] = sadcp_out[ri].rename({'x_m': 'xy'})
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(x_m=sadcp_out[ri].xy)
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(time_secs=sadcp_out[ri].time.astype(int))
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(x_km=sadcp_out[ri].x_m/1000)
+    sadcp_out[ri] = sadcp_out[ri].set_index(xy=['x_m','x_km','lat','lon','time','time_secs'])
+        
+    sadcp_outOD['AcrossUpwelling{}'.format(ri+1)] = sadcp_out[ri]
 
-    return scan_sadcp, scanfish_data, sadcp_out, sadcp
+    # transect leaving upwelling, heading west across filament
+    sadcp_out[ri] = sadcp.sel(time=slice(np.datetime64('2016-11-27T05:02:00'),np.datetime64('2016-11-27T17:32:00')))
+    sadcp_out[ri]['z'] = -1*sadcp_out[ri].depth[0,:]
+    sadcp_out[ri] = sadcp_out[ri].swap_dims({'depth_cell': 'z'})
+       
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(lon=sadcp_out[ri].lon)
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(lat=sadcp_out[ri].lat)
+    sadcp_out[ri].distance.values = np.cumsum(np.trunc(np.append(np.array(0),gsw.distance(sadcp_out[ri].lon.dropna(dim='time').values,  
+                                                                                               sadcp_out[ri].lat.dropna(dim='time').values,p=0))))
+    sadcp_out[ri] = sadcp_out[ri].rename({'distance': 'x_m'})
+    sadcp_out[ri] = sadcp_out[ri].swap_dims({'time': 'x_m'}) 
+    new_time2 = pd.to_datetime(np.interp(np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp),
+                                         sadcp_out[ri].x_m.values,pd.to_datetime(sadcp_out[ri].time.values).astype(int))) 
+    sadcp_out[ri] = sadcp_out[ri].interp(x_m=np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp))
+    sadcp_out[ri].coords['time'] = sadcp_out[ri].x_m
+    sadcp_out[ri]['time'].values = new_time2.values
+    sadcp_out[ri] = sadcp_out[ri].rename({'x_m': 'xy'})
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(x_m=sadcp_out[ri].xy)
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(time_secs=sadcp_out[ri].time.astype(int))
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(x_km=sadcp_out[ri].x_m/1000)
+    sadcp_out[ri] = sadcp_out[ri].set_index(xy=['x_m','x_km','lat','lon','time','time_secs'])
+        
+    sadcp_outOD['WestwardFromUpwellTransect{}'.format(ri+1)] = sadcp_out[ri]
+
+    # long route during storm, not straight line
+    #sadcp_out[ri] = sadcp.sel(time=slice(np.datetime64('2016-11-29T17:52:00'),np.datetime64('2016-11-30T05:00:00')))
+    #ind_section = np.logical_and(np.logical_and(np.logical_and(sadcp.lon.values > 10.6, sadcp.lon.values < 11.4),
+    #                                            sadcp.time.values >= sadcp.time.sel(time=np.datetime64('2016-11-29T17:52:00'), method='nearest').values),
+    #                             sadcp.time.values <= sadcp.time.sel(time=np.datetime64('2016-11-30T09:00:00'), method='nearest').values )
+    ind_section = np.logical_and(np.logical_and(np.logical_and(sadcp.lon.values > 10.6, sadcp.lon.values < 11.4),
+                                                sadcp.time.values >= np.datetime64('2016-11-29T17:52:00'),
+                                 sadcp.time.values <= np.datetime64('2016-11-30T09:00:00') ))
+    sadcp_out[ri] = sadcp.isel(time=ind_section)
+    sadcp_out[ri]['z'] = -1*sadcp_out[ri].depth[0,:]
+    sadcp_out[ri] = sadcp_out[ri].swap_dims({'depth_cell': 'z'})
+        
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(lon=sadcp_out[ri].lon)
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(lat=sadcp_out[ri].lat)
+    sadcp_out[ri].distance.values = np.cumsum(np.trunc(np.append(np.array(0),gsw.distance(sadcp_out[ri].lon.dropna(dim='time').values,  
+                                                                                               sadcp_out[ri].lat.dropna(dim='time').values,p=0))))
+    sadcp_out[ri] = sadcp_out[ri].rename({'distance': 'x_m'})
+    sadcp_out[ri] = sadcp_out[ri].swap_dims({'time': 'x_m'}) 
+    new_time2 = pd.to_datetime(np.interp(np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp),
+                                         sadcp_out[ri].x_m.values,pd.to_datetime(sadcp_out[ri].time.values).astype(int))) 
+    sadcp_out[ri] = sadcp_out[ri].interp(x_m=np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp))
+    #new_time1 = sadcp_out[ri].time
+    sadcp_out[ri].coords['time'] = sadcp_out[ri].x_m
+    sadcp_out[ri]['time'].values = new_time2.values
+    sadcp_out[ri] = sadcp_out[ri].rename({'x_m': 'xy'})
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(x_m=sadcp_out[ri].xy)
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(time_secs=sadcp_out[ri].time.astype(int))
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(x_km=sadcp_out[ri].x_m/1000)
+    sadcp_out[ri] = sadcp_out[ri].set_index(xy=['x_m','x_km','lat','lon','time','time_secs'])
+        
+    sadcp_outOD['AwayFromFilament{}'.format(ri+1)] = sadcp_out[ri]
+    
+    # long route during storm, not straight line
+    sadcp_out[ri] = sadcp.sel(time=slice(np.datetime64('2016-12-08T04:00:00'),np.datetime64('2016-12-08T10:00:00')))
+    sadcp_out[ri]['z'] = -1*sadcp_out[ri].depth[0,:]
+    sadcp_out[ri] = sadcp_out[ri].swap_dims({'depth_cell': 'z'})
+        
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(lon=sadcp_out[ri].lon)
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(lat=sadcp_out[ri].lat)
+    sadcp_out[ri].distance.values = np.cumsum(np.trunc(np.append(np.array(0),gsw.distance(sadcp_out[ri].lon.dropna(dim='time').values,  
+                                                                                               sadcp_out[ri].lat.dropna(dim='time').values,p=0))))
+    sadcp_out[ri] = sadcp_out[ri].rename({'distance': 'x_m'})
+    sadcp_out[ri] = sadcp_out[ri].swap_dims({'time': 'x_m'}) 
+    new_time2 = pd.to_datetime(np.interp(np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp),
+                                         sadcp_out[ri].x_m.values,pd.to_datetime(sadcp_out[ri].time.values).astype(int))) 
+    sadcp_out[ri] = sadcp_out[ri].interp(x_m=np.arange(0,dx_sadcp*sadcp_out[ri].x_m.size,dx_sadcp))
+    sadcp_out[ri].coords['time'] = sadcp_out[ri].x_m
+    sadcp_out[ri]['time'].values = new_time2.values
+    sadcp_out[ri] = sadcp_out[ri].rename({'x_m': 'xy'})
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(x_m=sadcp_out[ri].xy)
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(time_secs=sadcp_out[ri].time.astype(int))
+    sadcp_out[ri] = sadcp_out[ri].assign_coords(x_km=sadcp_out[ri].x_m/1000)
+    sadcp_out[ri] = sadcp_out[ri].set_index(xy=['x_m','x_km','lat','lon','time','time_secs'])
+        
+    sadcp_outOD['ToCapetown{}'.format(ri+1)] = sadcp_out[ri]    
+        
+    return scan_sadcp, scanfish_data, sadcp_outOD, sadcp

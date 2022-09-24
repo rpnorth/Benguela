@@ -46,8 +46,8 @@ def load_ctd_data(data_files):
         CT = gsw.CT_from_t(SA,ctd_cast.Temperature,ctd_cast.Pressure)
         RHO = gsw.rho(SA,CT,ctd_cast.Pressure)
         p_ref     = 10.1325; # reference pressure # following scanfish calc
-        Pot_dens  = gsw.rho(SA,CT,p_ref);
-        sigma_0   = Pot_dens - 1000;
+        Pot_dens  = gsw.rho(SA,CT,p_ref); # potential density
+        sigma_0   = Pot_dens - 1000; # potential density anomaly
 
         st_name = np.array(int(name[-3:]))# (int(name[-3:]))
 
@@ -65,7 +65,8 @@ def load_ctd_data(data_files):
                                 coords={'lon': (np.array(ctd_cast.longitude)[...,np.newaxis]),
                                         'lat': (np.array(ctd_cast.latitude)[...,np.newaxis]),
                                         'station': (st_name[...,np.newaxis]),
-                                        'time': np.array(pd.to_datetime(ctd_cast.time.values[0]-1, unit='D', origin=pd.Timestamp('01-01-2016')))[...,np.newaxis],
+                                        'time': np.array(pd.to_datetime(ctd_cast.time.values[0]-1, unit='D', 
+                                                                        origin=pd.Timestamp('01-01-2016')))[...,np.newaxis],
                                         'z': z}).stack(xy = ('lon','lat','station','time'))
 
         z_1m = np.arange(np.ceil(z.max()),np.floor(z.min()),-1.0) # seem to need exactly the same z to make concat work
@@ -182,68 +183,113 @@ def load_combine_ladcp_ctd_data(pathLADCP, pathCTD):
     pathCTD = r'/Users/North/Drive/Work/UniH_Work/DataAnalysis/Data/MET_132/CTD_calibrated/Down_Casts/1db_mean/data/'                     # use your path
     data_files = glob.glob(os.path.join(pathCTD, "*.asc"))     # advisable to use os.path.join as this makes concatenation OS independent
     ctd_data = load_ctd_data(data_files)
+    ctd_data = ctd_data.sortby('time')
 
     # load LADCP data
     pathLADCP = r'/Users/North/Drive/Work/UniH_Work/DataAnalysis/Data/MET_132/LADCP/profiles/'                     # use your path
     all_files = glob.glob(os.path.join(pathLADCP, "*.lad"))     # advisable to use os.path.join as this makes concatenation OS independent
     ladcp_data = load_ladcp_data(all_files)
+    ladcp_data = ladcp_data.sortby('time')
 
     # create transects 
-    ind_LADCP_section, ind_CTD_section = list((1,1,1,1,1)), list((1,1,1,1,1))
+    ind_LADCP_section, ind_CTD_section = list((1,1,1,1,1,1,1,1,1)), list((1,1,1,1,1,1,1,1,1))
 
-    ind_LADCP_section[0] = np.logical_and(np.logical_and(np.logical_and(ladcp_data.lon.values > 11.5, ladcp_data.lon.values < 12.5), 
-                                                                          ladcp_data.lat.values < -26.25),
-                                                           ladcp_data.time.values < np.datetime64('2016-11-21T09:00:00'))
-    ind_LADCP_section[1] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(ladcp_data.lon.values > 11.5, ladcp_data.lon.values < 12.5), 
-                                                                                    ladcp_data.lat.values < -26.25),
-                                                      ladcp_data.time.values < np.datetime64('2016-11-22T23:00:00')),
-                                       ladcp_data.time.values > np.datetime64('2016-11-21T09:00:00')) 
-    ind_LADCP_section[2] = np.logical_and(ladcp_data.time.values < np.datetime64('2016-12-02T03:30:00'),
-                                          ladcp_data.time.values > np.datetime64('2016-11-30T20:30:00')) 
-    ind_true = np.where(ind_LADCP_section[2])[0]
-    ind_LADCP_section[2][ind_true[6]] = False # CTD is missing for this station
-    ind_LADCP_section[3] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ladcp_data.lon.values > 12.95, ladcp_data.lon.values < 13.25), 
-                                      ladcp_data.lat.values < -25.9),
-                                      ladcp_data.lat.values > -26.25),
-                                      ladcp_data.time.values > np.datetime64('2016-11-26T09:55:00')),
-                                      ladcp_data.time.values < np.datetime64('2016-11-27T02:30:00') )
-    ind_LADCP_section[4] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ladcp_data.lon.values > 12.5, ladcp_data.lon.values < 13.1), 
-                                                        ladcp_data.lat.values < -26.15),
-                                                        ladcp_data.lat.values > -26.5),
-                                                        ladcp_data.time.values > np.datetime64('2016-12-02T20:30:00')),
-                                                        ladcp_data.time.values < np.datetime64('2016-12-03T13:00:00')) 
+    ind_LADCP_section[0] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-11-20T10:00:00'),
+                                          ladcp_data.time.values <= np.datetime64('2016-11-21T07:00:00'))
+    ind_LADCP_section[1] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-11-21T14:38:00'),
+                                          ladcp_data.time.values <= np.datetime64('2016-11-22T15:08:00'))
+#    ind_LADCP_section[1] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(ladcp_data.lon.values > 11.5, ladcp_data.lon.values < 12.5), 
+#                                                                                    ladcp_data.lat.values < -26.25),
+#                                                      ladcp_data.time.values <= np.datetime64('2016-11-22T15:08:00')),
+#                                       ladcp_data.time.values >= np.datetime64('2016-11-21T14:38:00')) 
+    # LADCP_CTD_Transect3
+    ind_LADCP_section[2] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-11-24T10:33:00'),
+                                          ladcp_data.time.values <= np.datetime64('2016-11-24T23:30:00'))
+    
+    ind_LADCP_section[3] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-11-26T08:30:00'),
+                                          ladcp_data.time.values <= np.datetime64('2016-11-27T00:01:00'))
+#    ind_LADCP_section[3] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ladcp_data.lon.values > 12.95, ladcp_data.lon.values < 13.25), 
+#                                      ladcp_data.lat.values < -25.9),
+#                                      ladcp_data.lat.values > -26.25),
+#                                      ladcp_data.time.values >= np.datetime64('2016-11-26T08:30:00')),
+#                                      ladcp_data.time.values <= np.datetime64('2016-11-27T00:01:00') )
+    # LADCP_CTD_Transect5
+    ind_LADCP_section[4] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-11-27T18:22:00'),
+                                          ladcp_data.time.values <= np.datetime64('2016-11-28T06:50:00'))
+    # no data available for Transect 6
+    #ind_LADCP_section[5] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-11-28T07:30:00'),ladcp_data.time.values <= np.datetime64('2016-11-28T19:00:00'))
+    ind_LADCP_section[5] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-11-30T21:05:00'),
+                                          ladcp_data.time.values <= np.datetime64('2016-12-01T19:35:00')) 
+    ind_true = np.where(ind_LADCP_section[5])[0]
+    ind_LADCP_section[5][ind_true[6]] = False # CTD is missing for this station
+    ind_LADCP_section[6] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-12-02T21:57:00'),
+                                          ladcp_data.time.values <= np.datetime64('2016-12-03T07:35:00'))
+    #ind_LADCP_section[6] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ladcp_data.lon.values > 12.5, ladcp_data.lon.values < 13.1), 
+    #                                                    ladcp_data.lat.values < -26.15),
+    #                                                    ladcp_data.lat.values > -26.5),
+    #                                                    ladcp_data.time.values >= np.datetime64('2016-12-02T21:57:00')),
+    #                                                    ladcp_data.time.values <= np.datetime64('2016-12-03T07:35:00')) 
+    # LADCP_CTD_Transect9
+    ind_LADCP_section[7] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-12-05T13:35:00'),
+                                          ladcp_data.time.values <= np.datetime64('2016-12-06T10:20:00')) 
+    ind_LADCP_section[8] = np.logical_and(ladcp_data.time.values >= np.datetime64('2016-12-07T10:07:00'),
+                                          ladcp_data.time.values <= np.datetime64('2016-12-08T02:35:00')) 
 
-    ind_CTD_section[0] = np.logical_and(np.logical_and(np.logical_and(ctd_data.lon.values > 11.5, ctd_data.lon.values < 12.5), 
-                                                    ctd_data.lat.values < -26.25),
-                                     ctd_data.time.values < np.datetime64('2016-11-21T09:00:00'))
-    ind_CTD_section[1] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(ctd_data.lon.values > 11.5, ctd_data.lon.values < 12.5), 
-                                                                                    ctd_data.lat.values < -26.25),
-                                                      ctd_data.time.values < np.datetime64('2016-11-22T23:00:00')),
-                                       ctd_data.time.values > np.datetime64('2016-11-21T09:00:00')) 
-    ind_CTD_section[2] = np.logical_and(ctd_data.time.values < np.datetime64('2016-12-02T03:30:00'),
-                                          ctd_data.time.values > np.datetime64('2016-11-30T20:30:00')) 
-    ind_CTD_section[3] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ctd_data.lon.values > 12.95, ctd_data.lon.values < 13.25), 
-                                                       ctd_data.lat.values < -25.9),
-                                                       ctd_data.lat.values > -26.25),
-                                                       ctd_data.time.values > np.datetime64('2016-11-26T09:55:00')),
-                                                       ctd_data.time.values < np.datetime64('2016-11-27T02:30:00')) 
-    ind_CTD_section[4] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ctd_data.lon.values > 12.5, ctd_data.lon.values < 13.1), 
-                                                       ctd_data.lat.values < -26.15),
-                                                       ctd_data.lat.values > -26.5),
-                                                       ctd_data.time.values > np.datetime64('2016-12-02T20:30:00')),
-                                                       ctd_data.time.values < np.datetime64('2016-12-03T13:00:00')) 
+    
+    # tried to get all transects, named in "0.MET132..."
+    ind_CTD_section[0] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-11-20T10:00:00'),
+                                        ctd_data.time.values <= np.datetime64('2016-11-21T07:00:00'))
+                                          
+    ind_CTD_section[1] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-11-21T14:38:00'),
+                                        ctd_data.time.values <= np.datetime64('2016-11-22T15:08:00'))
+    #ind_CTD_section[1] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(ctd_data.lon.values > 11.5, ctd_data.lon.values < 12.5), 
+    #                                                                                ctd_data.lat.values < -26.25),
+    #                                                  ctd_data.time.values <= np.datetime64('2016-11-22T15:08:00')),
+    #                                   ctd_data.time.values >= np.datetime64('2016-11-21T14:38:00')) 
+    # LADCP_CTD_Transect3
+    ind_CTD_section[2] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-11-24T10:33:00'),
+                                        ctd_data.time.values <= np.datetime64('2016-11-24T23:30:00'))
+    ind_true = np.where(ind_CTD_section[2])[0]
+    ind_CTD_section[2][ind_true[5]] = False # LADCP is missing for this station
+    ind_CTD_section[3] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-11-26T08:30:00'),
+                                        ctd_data.time.values <= np.datetime64('2016-11-27T00:01:00'))
+    #ind_CTD_section[3] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ctd_data.lon.values > 12.95, ctd_data.lon.values < 13.25), 
+    #                                                   ctd_data.lat.values < -25.9),
+    #                                                   ctd_data.lat.values > -26.25),
+    #                                                   ctd_data.time.values > np.datetime64('2016-11-26T08:30:00')),
+    #                                                   ctd_data.time.values < np.datetime64('2016-11-27T00:01:00')) 
+    # LADCP_CTD_Transect5
+    ind_CTD_section[4] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-11-27T17:43:00'),
+                                        ctd_data.time.values <= np.datetime64('2016-11-28T06:45:00'))
+    #ind_CTD_section[5] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-11-28T07:30:00'),ctd_data.time.values <= np.datetime64('2016-11-28T19:00:00'))
+    ind_CTD_section[5] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-11-30T21:05:00'),
+                                        ctd_data.time.values <= np.datetime64('2016-12-01T19:35:00')) 
+    
+    ind_CTD_section[6] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-12-02T21:57:00'),
+                                        ctd_data.time.values <= np.datetime64('2016-12-03T07:35:00'))
+    #ind_CTD_section[6] = np.logical_and(np.logical_and(np.logical_and(np.logical_and(np.logical_and(ctd_data.lon.values > 12.5, ctd_data.lon.values < 13.1), 
+    #                                                   ctd_data.lat.values < -26.15),
+    #                                                   ctd_data.lat.values > -26.5),
+    #                                                   ctd_data.time.values > np.datetime64('2016-12-02T21:57:00')),
+    #                                                   ctd_data.time.values < np.datetime64('2016-12-03T07:35:00')) 
+    # LADCP_CTD_Transect9
+    ind_CTD_section[7] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-12-05T13:35:00'),
+                                        ctd_data.time.values <= np.datetime64('2016-12-06T10:20:00')) 
+    ind_CTD_section[8] = np.logical_and(ctd_data.time.values >= np.datetime64('2016-12-07T10:07:00'),
+                                        ctd_data.time.values <= np.datetime64('2016-12-08T02:35:00')) 
 
+    
+    #print(ind_CTD_section[3],ind_LADCP_section[3])
+    #print('full:',ladcp_data.time.values,ctd_data.time.values)
     # combine LADCP and CTD into one dataset
-    ctd_ladcp = list((1,1,1,1,1))
+    ctd_ladcp = list((1,1,1,1,1,1,1,1,1))
     for ri in range(len(ind_CTD_section)):
         ctd_test = ctd_data.isel(xy=ind_CTD_section[ri])
         ladcp_test = ladcp_data.isel(xy=ind_LADCP_section[ri])
-
         # no temporal interpolation, because casts are so random
 
         # get same z coords too, before merging; using ladcp which has bigger spacing
         ctd_test = ctd_test.interp(z=ladcp_test.z)
-        #print(ctd_test,ladcp_test)
         
         # time/position of each cast may differ between ladcp and ctd, but referring to the same cast; so set to consistent times/positions
         ctd_test = ctd_test.reset_index('xy') # need to separate out 'time'
@@ -259,16 +305,20 @@ def load_combine_ladcp_ctd_data(pathLADCP, pathCTD):
 
         # For consistency with scan_sadcp, make average Pressure dim
         ctd_ladcp[ri]['Pressure_array'] = ctd_ladcp[ri].Pressure
-        ctd_ladcp[ri] = ctd_ladcp[ri].assign_coords(Pressure=ctd_ladcp[ri].z) # to get right dims
-        ctd_ladcp[ri].Pressure.values = ctd_ladcp[ri].Pressure_array.mean(dim='xy')
+        #ctd_ladcp[ri] = ctd_ladcp[ri].assign_coords(Pressure=ctd_ladcp[ri].z) # to get right dims
+        ctd_ladcp[ri] = ctd_ladcp[ri].assign_coords(Pressure=ctd_ladcp[ri].Pressure_array.mean(dim='xy')) # to get right dims
+        #ctd_ladcp[ri]['Pressure'] = ctd_ladcp[ri].Pressure_array.mean(dim='xy')
+        #ctd_ladcp[ri] = ctd_ladcp[ri].assigan(Pressure)ctd_ladcp[ri].Pressure_array.mean(dim='xy')
         # and re-order dimensions
         ctd_ladcp[ri] = ctd_ladcp[ri].transpose('xy','z')
         
         # calculate Vorticity, M**2, N**2, and Ri_Balanced
         ctd_ladcp[ri]['across_track_vel'] = ctd_ladcp[ri].u #(ctd_ladcp[ri].u**2+ctd_ladcp[ri].v**2)**0.5
         # need to create DataArray to get coords right
-        ctd_ladcp[ri]['distance'] = xr.DataArray(np.cumsum(np.trunc(np.append(np.array(0),gsw.distance(ctd_ladcp[ri].lon.dropna(dim='xy').values,  
-                                                                                               ctd_ladcp[ri].lat.dropna(dim='xy').values,p=0)))),dims='xy')
+        new_dx_m = gsw.distance(ctd_ladcp[ri].lon.dropna(dim='xy').values,
+                                ctd_ladcp[ri].lat.dropna(dim='xy').values,p=0)
+        dist = np.cumsum((np.append(np.array(0),new_dx_m)))
+        ctd_ladcp[ri] = ctd_ladcp[ri].assign_coords(distance=dist)
 
         # for plotting better if there is a coord option
         ctd_ladcp[ri] = ctd_ladcp[ri].assign_coords(x_km=ctd_ladcp[ri].distance/1000)

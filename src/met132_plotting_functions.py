@@ -1,3 +1,46 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import xarray as xr
+import scipy as sp
+import pandas as pd
+import Denmark_Strait.src.ssa_core as ssa
+import Denmark_Strait.src.spectra_and_wavelet_functions as sw
+import pycwt as wavelet
+from pyspec import helmholtz as helm
+from pyspec import spectrum as spec    
+import string
+from itertools import cycle
+from collections import OrderedDict
+
+def psd_plot_mean(psd_xrft,var_name,label_in,ax,sn,cpkm_cpm = 'cpm',lcolor=None,add_loglog_line=True,
+                 add_error_shade=True):
+    # plot spectra - convert x-axis to cpkm and y-axis to (m/s)^2 / cpkm
+    if cpkm_cpm == 'cpkm': factor = 1e3
+    if cpkm_cpm == 'cpm': factor = 1
+    nbins_spec_av = 10
+
+    wavenumKE_hat, psdKE_hat =  spec.avg_per_decade(psd_xrft[var_name].freq_m,
+                                                    (psd_xrft[var_name]).values,
+                                                    nbins=nbins_spec_av)
+    # divide by 1e3 to make cpkm
+    # sn is e.g. the number of depths or timesteps that (psd_xrft[var_name]).values has been averaged over
+    uEl,uEu = spec.spec_error(psdKE_hat/(2*factor), sn=sn, ci=0.95) # using txYC is too high for sn
+    p = ax.loglog((wavenumKE_hat*factor),psdKE_hat/(2*factor), alpha=0.85,lw=2,label=label_in,color=lcolor)        
+    # times 1e3 to make x cpkm
+    if add_error_shade:
+        ax.fill_between((wavenumKE_hat*factor),uEl,uEu, alpha=0.1,color=p[-1].get_color(), label=None)
+
+    xlim, ylim = [5e-6,6e-4],[1e-3,5*1e3]
+    if add_loglog_line: sw.plot_loglog_slope(ax,np.array((-5/3,-2,-3)),xlim,ylim)
+    #if si % 2 != 0:
+    # power spectral units
+    ax.set_ylabel(r'Power spectral density [m$^2$ s$^{-2}$/'+cpkm_cpm+']')
+    ax.set_xlabel('Along-track wavenumber ['+cpkm_cpm+']')
+    ax.set_title("")
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    return p
+
 def fftwaveplt_KE(scan_sadcp_in, depth_range_in=None,ylim=[4*10**-2, 10**1],xlim=[10**3, 6*10**4],nbins_spec_av=10,wavelet_scale_av=[10**3,10**4],psd_only=None):
     import numpy as np
     import matplotlib.pyplot as plt
@@ -65,7 +108,7 @@ def fftwaveplt_KE(scan_sadcp_in, depth_range_in=None,ylim=[4*10**-2, 10**1],xlim
                     if dat_in.size > 0:
                         waveKE = sw.run_wavelet(dat_in,wavelet_scale_av,time_name='x_m',period_name='wavelength')
 
-                    waveKE['glbl_power_var'] = waveKE.std2.values * waveKE.glbl_power
+                        waveKE['glbl_power_var'] = waveKE.std2.values * waveKE.glbl_power
                     axs[2,di].set_xscale('log')
                     axs[2,di].set_yscale('log')
 
@@ -142,57 +185,223 @@ def fftwaveplt_KE(scan_sadcp_in, depth_range_in=None,ylim=[4*10**-2, 10**1],xlim
         axs[0,di].set_xlim(xlim)
         axs[0,di].invert_xaxis()
 
+def plot_spec_pyspec(sadcp_transect_all,title,depth_range,nbins_spec_av,spec_variables,
+                     ax,left_flag=None,line_color_start=0,var_preserve_plt=False,
+                     gws_plt=False,wave_calc=False,ssa_filter=False,xlim_in=None,ylim_in=None,
+                     no_plot_flag=False,no_error_bars=False):
+    
+    if title is None:
+        sadcp_transect_in = sadcp_transect_all
+    else:
+        sadcp_transect_in = sadcp_transect_all[title]
+    
+    col_ind = np.arange(line_color_start,1,1/len(spec_variables))
+    
+    for ii in range(len(spec_variables)):
+        if len(spec_variables[ii])>0:
+            #print(sadcp_transect_in.z.sel(z=depth_range).values)
+            if spec_variables[ii]=='ke from u v':
+                K_u, psd_u, nspec_u, spec_raw_u, K_raw_u = sw.pspecd_depth_av(sadcp_transect_in, spec_variable='u',
+                                                                          depth_range_in=depth_range,nbins_spec_av=nbins_spec_av)
+                K_v, psd_v, nspec_v, spec_raw_v, K_raw_v = sw.pspecd_depth_av(sadcp_transect_in, spec_variable='v',
+                                                                          depth_range_in=depth_range,nbins_spec_av=nbins_spec_av)
+                spec_raw = (spec_raw_u + spec_raw_v)
+                K_raw = K_raw_u
+                psd_u = psd_u + psd_v
+            else:
+                K_u, psd_u, nspec_u, spec_raw, K_raw = sw.pspecd_depth_av(sadcp_transect_in, spec_variable=spec_variables[ii],
+                                                                          depth_range_in=depth_range,nbins_spec_av=nbins_spec_av)
+            
+            if no_plot_flag: continue
+            
+            if len(spec_variables)==2 and len(spec_variables[1])==0: 
+                line_label = title
+            else:
+                line_label = spec_variables[ii]
 
-def plot_line_at_one_depth(scan_sadcp, var_names, depth_in, window=10, x_lim=[0,180], y_lim=[-2e-7,2e-7], last_row_flag=None):
+            if var_preserve_plt:
+                uEl,uEu = spec.spec_error(K_raw*spec_raw/2, sn=nspec_u, ci=0.95) 
+                ax.fill_between((K_raw),uEl,uEu, color=plt.cm.tab10(col_ind[ii]), alpha=0.1)
+                ax.loglog((K_raw),K_raw*spec_raw/2, alpha=0.85,color=plt.cm.tab10(col_ind[ii]),lw=2,label=line_label)#('U: along-front'))
+            elif gws_plt:
+                wave_out = sw.wavelet_depth_av(sadcp_transect_in,spec_variable=spec_variables[ii], depth_range_in=depth_range,ssa_filter=ssa_filter)
+                ax.loglog(1/wave_out.scales,wave_out.glbl_power, alpha=0.85,color=plt.cm.tab10(col_ind[ii]),lw=2,label=line_label)
+            else:
+                uEl,uEu = spec.spec_error(spec_raw/2, sn=nspec_u, ci=0.95) 
+                if no_error_bars:
+                    ax.loglog((K_raw),spec_raw/2, alpha=0.85,color=plt.cm.tab10(col_ind[ii]),lw=1,label=line_label)#('U: along-front'))
+                else:
+                    ax.fill_between((K_raw),uEl,uEu, color=plt.cm.tab10(col_ind[ii]), alpha=0.1)
+                    ax.loglog((K_raw),spec_raw/2, alpha=0.85,color=plt.cm.tab10(col_ind[ii]),lw=2,label=line_label)#('U: along-front'))
+
+                if spec_variables[ii] == 'across':
+                    psd_across = spec_raw
+                if ((spec_variables[ii] == 'along' and  spec_variables[ii-1] == 'across')):
+                    psd_along = spec_raw
+                    psi_rot, phi_div = helm.spec_helm_decomp(K_raw,psd_across, psd_along)
+                    rotEl,rotEu = spec.spec_error(psi_rot/2, sn=nspec_u, ci=0.95) 
+                    divEl,divEu = spec.spec_error(phi_div/2, sn=nspec_u, ci=0.95) 
+                    ax.fill_between((K_raw),rotEl,rotEu, color=plt.cm.autumn(0.6), alpha=0.1)
+                    ax.loglog((K_raw),psi_rot/2, alpha=0.5,color=plt.cm.autumn(0.6),lw=1.5,label=('Psi: rotational'))
+                    ax.fill_between((K_raw),divEl,divEu, color=plt.cm.autumn(0.2), alpha=0.1)
+                    ax.loglog((K_raw),phi_div/2, alpha=0.5,color=plt.cm.autumn(0.2),lw=1.5,label=('Phi: divergent'))
+                    
+                    y = ssa.ssafilter(np.abs((psd_across/2)/(psd_along/2)),np.int(np.abs((psd_across/2)/(psd_along/2)).size/3),[0,1,2,3])
+                    ax.loglog(K_raw,y,alpha=0.85,color=plt.cm.binary(0.6),lw=1,label=('Filt. across KE / along KE'))
+                    
+            
+            if wave_calc:
+                wave_out = sw.wavelet_depth_av(sadcp_transect_in,spec_variable=spec_variables[ii], depth_range_in=depth_range,ssa_filter=ssa_filter)  
+            ds_out_flag = False
+            
+        else: # if there is only one variable, save in xarray format
+            # create DataSet/DataArray as output
+            ds = xr.Dataset({'psd_binned': (['wavenumber_binned'],  psd_u),
+                             'spec_raw': (['wavenumber_raw'], spec_raw)},
+                            coords={'wavenumber_binned': K_u,
+                                    'wavenumber_raw': K_raw,
+                                    'n_transects':nspec_u})
+            ds_out_flag = True
+
+    if not no_plot_flag:    
+        if var_preserve_plt:
+            xlim, ylim = [3*10**-6,10**-3], [0, 1e-3]
+        elif gws_plt:
+            xlim, ylim = [3*10**-6,10**-3], [1e-6, 1e2]
+        else:
+            xlim, ylim = [3*10**-6,10**-3], [10**-3, 2*10**2]
+        if xlim_in is not None: xlim = xlim_in
+        if ylim_in is not None: ylim = ylim_in        
+        sw.plot_loglog_slope(ax,np.array((-5/3,-2,-3)),xlim,ylim)
+        ax.set_ylim(ylim)
+        ax.set_xlim(xlim)
+        ax.set_xlabel("Along-track wavenumber [cpm]")
+        if len(spec_variables)>2 and len(spec_variables[1])>0: 
+            lg = ax.legend(loc=3)
+            ax.text(0.98,0.95,title,
+                        transform=ax.transAxes,horizontalalignment='right', verticalalignment='top')
+        if left_flag: 
+            if var_preserve_plt:
+                ax.set_ylabel(r"KE Variance-preserving [1/cpm]")
+            elif gws_plt:
+                ax.set_ylabel(r"KE GWS [..]")
+            else:
+                ax.set_ylabel(r"KE spectral density [m$^2$ s$^{-2}$/cpm]")
+            ax.text(0.98,0.90,'Depths: %i ' %sadcp_transect_in.z.sel(z=depth_range)[0] + 'to %i m' %sadcp_transect_in.z.sel(z=depth_range)[-1],
+                        transform=ax.transAxes,horizontalalignment='right', verticalalignment='top')
+
+        # !!! Minor Ticks are still not quite right
+        sw.add_second_axis(ax)
+        ax.set_xlabel("Along-track wavenumber [cpm]")
+    
+    if gws_plt or wave_calc:
+        return ax, wave_out
+    elif no_plot_flag:
+        return ds
+    elif ds_out_flag:
+        return ax, ds        
+    else:
+        return ax
+        #return ax, K_u, psd_u, nspec_u, spec_raw, K_raw, ds
+    
+def plot_line_at_one_depth(scan_sadcp, var_name, z_value=None,z_index=None, Gradient=False, Filter=False, Factor=False, 
+                           ax=None, lcolor=None, llinestyle=None, x_lim=[0,180],y_lim=[-150,0], last_row_flag=None):
     import numpy as np
     import matplotlib.pyplot as plt
     import xarray as xr
-    
-    ncols, nrows = len(scan_sadcp)*1, 1
-    
-    fig, ax = plt.subplots(nrows = 1, ncols = 2, sharey=True, sharex=True, figsize=(20,2))
-    
-    for t_in in range(len(scan_sadcp)): # loop through the different variables
-        if var_names[t_in] == '': continue # blank
-    
-        # due to multi-indexing, problems with "rolling"; workaround
-        ax[t_in].plot(scan_sadcp[t_in].x_km,scan_sadcp[t_in][var_names].reset_index('xy').set_index(xy=['time']).rename({'xy':'time'}).sel(z=scan_sadcp[t_in].z==depth_in).rolling(center=True,time=window).mean())
-        ax[t_in].axhline(y=0)
-        
-        if var_names == var_names and t_in < 1: ax[t_in].set_ylabel('db/dx$_{30m}$ [s$^{-1}$]')
-        
-        if last_row_flag is not None:
-            ax[t_in].set_xlabel('Distance [km]')
-        else:
-            ax[t_in].set_xlabel('')
-            ax[t_in].tick_params(labelbottom=False) 
-        ax[t_in].set_ylim(y_lim)
-        ax[t_in].set_xlim(x_lim) 
 
-def plot_profile_view(scan_sadcp, ctd_ladcp, var_names, x_lim=[0,180],y_lim=[-150,0],pcolormesh_flag=None,last_row_flag=None):
+    # due to multi-indexing...
+    if z_index: 
+        if isinstance(z_index,slice):
+            scan_sadcp_z_mean = scan_sadcp[var_name].reset_index('xy').swap_dims({'xy': 'x_km'}).isel(z=z_index).mean(dim='z')
+            label_var = (var_name+' over %i ' %scan_sadcp.z.isel(z=z_index)[0] + 'to %i m' %scan_sadcp.z.isel(z=z_index)[-1])
+        else:
+            scan_sadcp_z_mean = scan_sadcp[var_name].reset_index('xy').swap_dims({'xy': 'x_km'}).isel(z=z_index)
+            label_var = (var_name+' at %i m' %scan_sadcp.z.isel(z=z_index).values)
+    
+    elif z_value:
+        if isinstance(z_value,slice):
+            scan_sadcp_z_mean = scan_sadcp[var_name].reset_index('xy').swap_dims({'xy': 'x_km'}).sel(z=z_value).mean(dim='z')
+            label_var = (var_name+' over %i ' %scan_sadcp.z.sel(z=z_value)[0] + 'to %i m' %scan_sadcp.z.sel(z=z_value)[-1])
+        else:
+            scan_sadcp_z_mean = scan_sadcp[var_name].reset_index('xy').swap_dims({'xy': 'x_km'}).sel(z=z_value,method='nearest')
+            label_var = (var_name+' at %i m' %scan_sadcp.z.sel(z=z_value,method='nearest').values)
+    else: # not depth averaging
+        scan_sadcp_z_mean = scan_sadcp[var_name].reset_index('xy').swap_dims({'xy': 'x_km'})
+        label_var = (var_name)
+        
+
+    if var_name is 'sigma_0':
+        scan_sadcp_z_mean = 10*(scan_sadcp_z_mean/scan_sadcp_z_mean.mean('x_km')-np.mean(scan_sadcp_z_mean/scan_sadcp_z_mean.mean('x_km')))
+        label_var = ('normalized('+label_var+')x10')
+    if Filter:
+        y = ssa.ssafilter(scan_sadcp_z_mean,np.int(scan_sadcp_z_mean.size/3),[0,1])
+        label_var = ('filtered('+label_var+')')
+    else:
+        y=scan_sadcp_z_mean.values
+    if Gradient:
+        y = np.diff(y)
+        x = scan_sadcp_z_mean.x_km[0:-1].values+scan_sadcp_z_mean.x_km.diff(dim='x_km').mean(dim='x_km').values
+        label_var = ('grad('+label_var+')')
+    else:
+        x = scan_sadcp_z_mean.x_km.values
+    if Factor:
+        y = y*Factor
+        label_var = (label_var+'x'+str(Factor))
+        
+    ax.text(0.98,0.95,scan_sadcp.TransectName,
+                transform=ax.transAxes,horizontalalignment='right', verticalalignment='top')
+
+    ax.plot(x,y,label=label_var,color=lcolor,linestyle=llinestyle)
+
+    if last_row_flag is not None:
+        ax.set_xlabel('Distance [km]')
+    else:
+        ax.set_xlabel('')
+        ax.tick_params(labelbottom=False) 
+    ax.set_ylim(y_lim)
+    ax.set_xlim(x_lim) 
+
+    if scan_sadcp.TransectDirection in ['N-S','W-E']: 
+        # then flip it so it is always S-N or E-W
+        ax.invert_xaxis()
+
+    if scan_sadcp.TransectDirection in ['N-S', 'S-N']: 
+        ax.text(5/80,-0.12,'South',transform=ax.transAxes,horizontalalignment='right',verticalalignment='bottom')
+        ax.text(7.75/8,-0.12,'North',transform=ax.transAxes,horizontalalignment='right',verticalalignment='bottom')
+    else:
+        ax.text(5/80,-0.12,'East',transform=ax.transAxes,horizontalalignment='right',verticalalignment='bottom')
+        ax.text(7.75/8,-0.12,'West',transform=ax.transAxes,horizontalalignment='right',verticalalignment='bottom')
+    return ax
+
+def plot_profile_view(scan_sadcp, ctd_ladcp, var_names, x_lim=[0,180], y_lim=[-150,0], pcolormesh_flag=None, last_row_flag=None, axs_in=None, ctd_only=None,mld_flag=False,first_row_flag=None):
+    
     import numpy as np
     import matplotlib.pyplot as plt
     import matplotlib.cbook
-    from oceans.sw_extras import gamma_GP_from_SP_pt
+#     from oceans.sw_extras import gamma_GP_from_SP_pt
     from matplotlib.patches import Polygon
     import gsw
     import pandas as pd
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
     # ================        
     # Plot sections of different variables
     # ================        
     U_range = np.array((-0.4,0.4))
     T_range = np.array((15,18)) #sst_range
-    S_range = np.array((35.2,35.6)) #sst_range
+    S_range = np.array((35.,35.6)) #sst_range
     Rho_range = np.array((1025.6,1026.6)) #((ctd_data.RHO.min(),ctd_data.RHO.max()))
-    sigma_range = np.array((25.6,26.)) #Rho_range-1000
+    sigma_range = np.array((24.2,27.2)) #Rho_range-1000
     N2_range = np.array((-5,-3)) #np.array((0.0001,0.1)) #Rho_range-1000
-    M2_range = np.array((-7,-6)) #np.array((0.0001,0.1)) #Rho_range-1000
+    M2_range = np.array((-8,-6)) #np.array((0.0001,0.1)) #Rho_range-1000
+    N2_range_1 = np.array((0,5e-4)) # np.array((1e-5,1e-3)) #np.array((0.0001,0.1)) #Rho_range-1000
+    M2_range_1 = np.array((1e-8,1e-6)) #np.array((0.0001,0.1)) #Rho_range-1000
     Ri_range = np.array((0,1)) #Rho_range-1000
     PV_range = np.array((-6,6))
     Instab_range = np.array((0,5))
     #x_lim = [0,180]
-    sigma_levels = np.arange(sigma_range[0]+.2,sigma_range[1]+.2,0.2)
+    sigma_levels = np.arange(sigma_range[0]-0.2,sigma_range[1]+.2,0.05)
 
     # pick the desired colormap, sensible levels, and define a normalization
     # instance which takes data values and translates those into levels.
@@ -208,7 +417,10 @@ def plot_profile_view(scan_sadcp, ctd_ladcp, var_names, x_lim=[0,180],y_lim=[-15
     if ctd_ladcp is None and var_names[1] == '': ncols, nrows = len(scan_sadcp), 1
     elif var_names[1] == '': ncols, nrows = len(scan_sadcp) + len(ctd_ladcp), 1
     
-    fig, ax = plt.subplots(nrows = nrows, ncols = ncols, sharey=True, figsize=(20,5))
+    #ncols, nrows = 8, 1
+    if axs_in is None:
+        fig, ax = plt.subplots(nrows = nrows, ncols = ncols, sharey=True, figsize=(20,5))
+    
     cik = 0
     for ti in range(2): # loop through scan_sadcp and ctd_ladcp
         # skip empty values
@@ -217,25 +429,47 @@ def plot_profile_view(scan_sadcp, ctd_ladcp, var_names, x_lim=[0,180],y_lim=[-15
         if ti == 0: platform, subscrpt = scan_sadcp, 'SADCP'
         if ti == 1: platform, subscrpt = ctd_ladcp, 'LADCP'
         
-        for ri in range(len(platform)): # loop through the different sections
+        if isinstance(platform, dict): # if OrderedDict
+            ind_in = platform
+        else:
+            ind_in = range(len(platform))  
+
+        rik = 0
+        for ri in ind_in: # loop through the different sections
             # 
             ci_next = range(len(var_names)) 
             for ci in range(len(var_names)): # loop through the different variables
                 if var_names[ci] == '': continue # blank
+                
+                if axs_in is None: 
+                    axs = ax[cik]
+                elif isinstance(axs_in,list): 
+                    axs=axs_in[cik]
+                else:
+                    axs=axs_in
 
-                if var_names[ci] == 'u': v_range, cmap_in, title = U_range, plt.cm.RdBu_r, 'u$_{'+subscrpt+'}$ [ms$^{-1}$]'
-                if var_names[ci] == 'v': v_range, cmap_in, title = U_range, plt.cm.RdBu_r, 'v$_{'+subscrpt+'}$ [ms$^{-1}$]'
-                if var_names[ci] == 'CT': v_range, cmap_in, title = T_range, plt.cm.RdBu_r, 'T$_C$ [$^\circ$]'
+                if var_names[ci] == 'u' or var_names[ci] == 'u_prime': v_range, cmap_in, title = U_range, plt.cm.RdBu_r, 'u$_{'+subscrpt+'}$ [ms$^{-1}$]'
+                if var_names[ci] == 'v' or var_names[ci] == 'v_prime': v_range, cmap_in, title = U_range, plt.cm.RdBu_r, 'v$_{'+subscrpt+'}$ [ms$^{-1}$]'
+                if var_names[ci] == 'across' or var_names[ci] == 'across_prime': v_range, cmap_in, title = U_range, plt.cm.RdBu_r, 'across$_{'+subscrpt+'}$ [ms$^{-1}$]'
+                if var_names[ci] == 'along' or var_names[ci] == 'along_prime': v_range, cmap_in, title = U_range, plt.cm.RdBu_r, 'along$_{'+subscrpt+'}$ [ms$^{-1}$]'
+                if var_names[ci] == 'CT': v_range, cmap_in, title = T_range, plt.cm.coolwarm, 'T$_C$ [$^\circ$]' #RdBu_r
                 if var_names[ci] == 'SA': v_range, cmap_in, title = S_range, plt.cm.viridis, 'S$_A$ [g kg$^{-1}$]'
                 if var_names[ci] == 'sigma_0': v_range, cmap_in, title = sigma_range, plt.cm.viridis, r'$\rho_{\theta}$ [$kg m^{-3}$]'
-                if var_names[ci] == 'db_dx_log10': v_range, cmap_in, title = M2_range, plt.cm.Blues,'M$^2_{'+subscrpt+'}$ [s$^{-2}$]'
-                if var_names[ci] == 'db_dz_log10': v_range, cmap_in, title = N2_range, plt.cm.Blues,'N$^2_{'+subscrpt+'}$ [s$^{-2}$]'
+                if var_names[ci] == 'db_dx_log10': v_range, cmap_in, title = M2_range, plt.cm.Blues,'M$^{2}_{'+subscrpt+'}$ [s$^{-2}$]'
+                if var_names[ci] == 'db_dz_log10': v_range, cmap_in, title = N2_range, plt.cm.GnBu,'N$^{2}_{'+subscrpt+'}$ [s$^{-2}$]'
+                if var_names[ci] == 'db_dx': v_range, cmap_in, title = M2_range_1, plt.cm.Blues,'M$_{'+subscrpt+'}^{2}$ [s$^{-2}$]'
+                if var_names[ci] == 'db_dz': v_range, cmap_in, title = N2_range_1, plt.cm.GnBu,'N$_{'+subscrpt+'}^{2}$ [s$^{-2}$]'
                 if var_names[ci] == 'Rib': v_range, cmap_in, title = Ri_range, plt.cm.Blues_r ,'Ri$^B_{'+subscrpt+'}$ [-]'
-                if var_names[ci] == 'Rig': v_range, cmap_in, title = Ri_range, plt.cm.Blues_r ,'Ri$^G_{'+subscrpt+'}$ [-]'
+                if var_names[ci] == 'Rig': v_range, cmap_in, title = Ri_range, plt.cm.coolwarm ,'Ri$^G_{'+subscrpt+'}$ [-]'
                 if var_names[ci] == 'EPV_plot': v_range, cmap_in, title = PV_range, plt.cm.coolwarm ,'EPV$_{'+subscrpt+'}$ [-]'
                 if var_names[ci] == 'relative_vorticity': v_range, cmap_in, title = PV_range, plt.cm.coolwarm ,'RV$_{'+subscrpt+'}$ [-]'
-                if var_names[ci] == 'Instability_GravMixSymInertStab': v_range, cmap_in, title = Instab_range, plt.cm.magma_r ,'Instability$_{'+subscrpt+'}$'
+                if var_names[ci] == 'ang_Rib': v_range, cmap_in, title = Instab_range, plt.cm.magma_r ,'Instability$_{'+subscrpt+'}$'
+                if var_names[ci] == 'StableGravMixSymInert': v_range, cmap_in, title = Instab_range, plt.cm.tab10.colors[:5], 'Instability$_{'+subscrpt+'}$'
+                if var_names[ci] == 'Instability_StableGravMixSymInertStab_fromThompson': v_range, cmap_in, title = Instab_range, plt.cm.tab10.colors[:5], 'Instability$_{'+subscrpt+'_Thompson}$'
+                if var_names[ci] == 'Instability_StableGravMixSymInertStab_fromThomas': v_range, cmap_in, title = Instab_range, plt.cm.tab10.colors[:5], 'Instability$_{'+subscrpt+'_Thomas}$'
+                
                 if var_names[ci] == 'geo_velocity': v_range, cmap_in, title = U_range, plt.cm.RdBu_r ,'u$^Geo_{'+subscrpt+'}$ [-]'
+                if var_names[ci] == 'ang_Rib_Check': v_range, cmap_in, title = ((-1e-8, 1e-8)), plt.cm.coolwarm ,'AbsVort x f$_0$ [s$^{-2}$]'
                     
                 if var_names[ci] == 'db_dx_log10': platform[ri]['db_dx_log10']  = np.log10(abs(platform[ri]['db_dx']))
                 if var_names[ci] == 'db_dz_log10': platform[ri]['db_dz_log10']  = np.log10(abs(platform[ri]['db_dz']))
@@ -244,179 +478,411 @@ def plot_profile_view(scan_sadcp, ctd_ladcp, var_names, x_lim=[0,180],y_lim=[-15
 
                 if pcolormesh_flag is None:
                     # due to multi-indexing, problems with x-axis; workaround: reset_index('xy')
-                    conmap = platform[ri][var_names[ci]].reset_index('xy').plot.contourf(x='x_km',y='z',ax=ax[cik],vmin=v_range[0],vmax=v_range[1],
+                    conmap = platform[ri][var_names[ci]].reset_index('xy').plot.contourf(x='x_km',y='z',
+                                                                                         ax=axs,vmin=v_range[0],vmax=v_range[1],alpha = 0.5, 
                                                                     cmap = cmap_in, levels = np.linspace(v_range[0],v_range[1],21),
-                                                                    cbar_kwargs={'ticks': np.linspace(v_range[0],v_range[1],3), 
-                                                                                'orientation':"horizontal",'pad': -0.2,
-                                                                                'label':'','shrink':0.5,'aspect':10})
-                elif var_names[ci] == 'Instability_GravMixSymInertStab':
-                    conmap = platform[ri][var_names[ci]].reset_index('xy').plot.pcolormesh(x='x_km',y='z',ax=ax[cik],vmin=v_range[0],vmax=v_range[1],
-                                                                    cmap = cmap_in, levels = np.arange(0,6,1), shading = shading_type,
-                                                                    cbar_kwargs={'label': ([' ','GI','MI','SI','II']), 
-                                                                                'orientation':"horizontal",'pad': -0.2,
-                                                                                'shrink':0.5,'aspect':10})
+                                                                    add_colorbar=False)
+                    cbaxes = inset_axes(axs, width="40%", height="5%", loc=1) 
+                    plt.colorbar(conmap, cax=cbaxes, ticks=np.linspace(v_range[0],v_range[1],3), orientation='horizontal')
+#                                                                    cbar_kwargs={'ticks': np.linspace(v_range[0],v_range[1],4), 
+#                                                                                'orientation':"horizontal",'pad': -0.2,
+#                                                                                'label':'','shrink':0.5,'aspect':10})
+                elif var_names[ci] == 'StableGravMixSymInert' or var_names[ci] == 'Instability_StableGravMixSymInertStab_fromThompson' or var_names[ci] == 'Instability_StableGravMixSymInertStab_fromThomas':
+                    conmap = platform[ri][var_names[ci]].reset_index('xy').plot.pcolormesh(x='x_km',y='z',ax=axs,vmin=v_range[0],vmax=v_range[1],
+                                                                    colors = cmap_in, levels = np.arange(0,6,1), shading = shading_type,
+                                                                    add_colorbar=False)
+                    cbaxes = inset_axes(axs, width="40%", height="5%", loc=1) 
+                    plt.colorbar(conmap, cax=cbaxes, label= ([' ','GI','MI','SI','II']), orientation='horizontal')
+#                                                                    cbar_kwargs={'label': ([' ','GI','MI','SI','II']), 
+#                                                                                'orientation':"horizontal",'pad': -0.2,
+#                                                                                'shrink':0.5,'aspect':10})
+
                 else:    
-                    conmap = platform[ri][var_names[ci]].reset_index('xy').plot.pcolormesh(x='x_km',y='z',ax=ax[cik],vmin=v_range[0],vmax=v_range[1],
-                                                                        cmap = cmap_in, shading = shading_type, levels = np.linspace(v_range[0],v_range[1],21),
-                                                                        cbar_kwargs={'ticks': np.linspace(v_range[0],v_range[1],3), 
-                                                                                    'orientation':"horizontal",'pad': -0.2,
-                                                                                    'label':'','shrink':0.5,'aspect':10})
-                if var_names[ci] == 'Instability_GravMixSymInertStab':
+                    conmap = platform[ri][var_names[ci]].reset_index('xy').plot.pcolormesh(x='x_km',y='z',ax=axs,vmin=v_range[0],vmax=v_range[1],
+                                                                                           cmap = cmap_in, shading = shading_type, 
+                                                                                           levels = np.linspace(v_range[0],v_range[1],21),
+                                                                                           add_colorbar=False)
+                    cbaxes = inset_axes(axs, width="40%", height="5%", loc=1) 
+                    plt.colorbar(conmap, cax=cbaxes, ticks=np.linspace(v_range[0],v_range[1],3), orientation='horizontal')
+#                                                                        cbar_kwargs={'ticks': np.linspace(v_range[0],v_range[1],3), 
+#                                                                                    'orientation':"horizontal",'pad': -0.2,
+#                                                                                    'label':'','shrink':0.5,'aspect':10})
+#                 if var_names[ci] == 'StableGravMixSymInert' or var_names[ci] == 'Instability_StableGravMixSymInertStab_fromThompson' or var_names[ci] == 'Instability_StableGravMixSymInertStab_fromThomas':
+#                     # Mixed layer depth 
+#                     platform[ri]['MLD'] = platform[ri].sigma_0 - platform[ri].sigma_0.sel(z=platform[ri].z.max(),method='nearest') # density nearest to surface
+#                     conmap3 = platform[ri].MLD.T.reset_index('xy').plot.contour(x='x_km',y='z',ax=axs,levels=[0.01,0.1],colors='0.05',linewidths=1.5)
+#                     # contour of density on top !!! Note. xarray seems to account for different plotting locations of contour and pcolormesh
+#                     conmap2 = platform[ri].sigma_0.reset_index('xy').plot.contour(x='x_km',y='z',ax=axs,levels = sigma_levels,colors='0.25',linewidths=1)
+                if hasattr(platform[ri], 'sigma_0'):
+                    # contour of density on top !!! Note. xarray seems to account for different plotting locations of contour and pcolormesh
+                    conmap2 = platform[ri].sigma_0.reset_index('xy').plot.contour(x='x_km',y='z',ax=axs,levels = sigma_levels,colors='0.25',linewidths=1)
+                elif ctd_only:
+                    conmap2 = ctd_only[ri].sigma_0.reset_index('xy').plot.contour(x='x_km',y='z',ax=axs,levels = sigma_levels,colors='0.25',linewidths=1)
+                    
+                if mld_flag:
                     # Mixed layer depth
                     platform[ri]['MLD'] = platform[ri].sigma_0 - platform[ri].sigma_0.sel(z=platform[ri].z.max(),method='nearest') # density nearest to surface
-                    conmap3 = platform[ri].MLD.T.reset_index('xy').plot.contour(x='x_km',y='z',ax=ax[cik],levels=[0.01,0.1],colors='0.05',linewidths=1.5)
-                elif hasattr(platform[ri], 'sigma_0'):
-                    # contour of density on top !!! Note. xarray seems to account for different plotting locations of contour and pcolormesh
-                    conmap2 = platform[ri].sigma_0.reset_index('xy').plot.contour(x='x_km',y='z',ax=ax[cik],levels = sigma_levels,colors='0.25',linewidths=1)
+                    conmap3 = platform[ri].MLD.T.reset_index('xy').plot.contour(x='x_km',y='z',ax=axs,levels=[0.01, 0.1, 0.25], colors='0.05', linewidths=1.5)
 
-                if ri > 0: # remove colorbar
+                if rik > 0: # remove colorbar
                     conmap.colorbar.remove()     
                 else:
-                    conmap.colorbar.ax.tick_params(labelsize=10) #
+                    conmap.colorbar.ax.tick_params(labelsize=14) #
 
-                ax[cik].set_title(title)
+                #axs.set_title(title)
+                axs.text(0,1,'     '+title,transform=axs.transAxes,horizontalalignment='left',
+                         verticalalignment='top')        
+
 
                 if cik == 0:
-                    ax[cik].set_ylabel('Depth [m]')
+                    axs.set_ylabel('Depth [m]')
+                elif axs_in is not None:
+                    axs.set_ylabel('Depth [m]')
                 else:
-                    ax[cik].set_ylabel('')
-                    ax[cik].tick_params(labelleft=False) 
-                if last_row_flag is not None:
-                    ax[cik].set_xlabel('Distance [km]')
+                    axs.set_ylabel('')
+                    axs.tick_params(labelleft=False) 
+                                    
+                if last_row_flag:
+                    axs.set_xlabel('Distance [km]')
                 else:
-                    ax[cik].set_xlabel('')
-                    ax[cik].tick_params(labelbottom=False) 
-                ax[cik].set_xlim(x_lim)
-                ax[cik].set_ylim(y_lim)
+                    axs.set_xlabel('')
+                    axs.tick_params(labelbottom=False) 
+                axs.set_xlim(x_lim)
+                axs.set_ylim(y_lim)
+                    
+                if platform[ri].TransectDirection in ['N-S','W-E']: 
+                    # then flip it so it is always S-N or E-W
+                    axs.invert_xaxis()
+                    if ci == 0:
+                        dates = pd.Series(platform[ri].time.values)
+                        axs.text(1,0,(str(dates[0].month)+'-'+str(dates[0].day)+' '+str(dates[0].hour)+':'+str(dates[0].minute)),
+                                       transform=axs.transAxes,horizontalalignment='right',verticalalignment='top',fontsize=10)        
+                        axs.text(0,0,(str(dates[dates.size-1].month)+'-'+str(dates[dates.size-1].day)+' '+
+                                      str(dates[dates.size-1].hour)+':'+str(dates[dates.size-1].minute)),
+                                 transform=axs.transAxes,horizontalalignment='left',verticalalignment='top',fontsize=10)        
+                    
+                else:
+                    if ci == 0:
+                        dates = pd.Series(platform[ri].time.values)
+                        axs.text(0,0,(str(dates[0].month)+'-'+str(dates[0].day)+' '+str(dates[0].hour)+':'+str(dates[0].minute)),
+                                       transform=axs.transAxes,horizontalalignment='left',verticalalignment='top',fontsize=10)        
+                        axs.text(1,0,(str(dates[dates.size-1].month)+'-'+str(dates[dates.size-1].day)+' '+
+                                      str(dates[dates.size-1].hour)+':'+str(dates[dates.size-1].minute)),
+                                 transform=axs.transAxes,horizontalalignment='right',verticalalignment='top',fontsize=10)        
 
-                if ci == 0:
-                    dates = pd.Series(platform[ri].time.values)
-                    ax[cik].text(0,0,(str(dates[0].month)+'-'+str(dates[0].day)+' '+str(dates[0].hour)+':'+str(dates[0].minute)),
-                                   transform=ax[cik].transAxes,horizontalalignment='left',verticalalignment='top',fontsize=10)        
-                    ax[cik].text(1,0,(str(dates[dates.size-1].month)+'-'+str(dates[dates.size-1].day)+' '+str(dates[dates.size-1].hour)+':'+str(dates[dates.size-1].minute)),
-                                   transform=ax[cik].transAxes,horizontalalignment='right',verticalalignment='top',fontsize=10)        
-                else:
-                    ax[cik].text(0,0.9,' S',transform=ax[cik].transAxes,horizontalalignment='left',verticalalignment='top',fontsize=10)      
-                    ax[cik].text(1,0.9,' N',transform=ax[cik].transAxes,horizontalalignment='right',verticalalignment='top',fontsize=10)      
-                
-                if platform[ri].lat.values[0] > platform[ri].lat.values[-1]:
-                    ax[cik].invert_xaxis()
 
+                if platform[ri].TransectDirection in ['N-S', 'S-N'] and ci == 0: 
+                    axs.text(5/80,-0.12,'South',transform=axs.transAxes,horizontalalignment='right',verticalalignment='bottom')
+                    axs.text(7.75/8,-0.12,'North',transform=axs.transAxes,horizontalalignment='right',verticalalignment='bottom')
+                elif ci == 0:
+                    axs.text(5/80,-0.12,'East',transform=axs.transAxes,horizontalalignment='right',verticalalignment='bottom')
+                    axs.text(7.75/8,-0.12,'West',transform=axs.transAxes,horizontalalignment='right',verticalalignment='bottom')
+
+                if first_row_flag and ci==0:
+                    # add second axes with latitudes
+                    ax2 = axs.twiny() 
+                    ax2.set_xlim(axs.axis()[0], axs.axis()[1])
+                    # set tick values to be the matching latitude values
+                    xtick_vals2 = (platform[ri].reset_index('xy').swap_dims({'xy': 'x_km'}).interp(x_km=axs.get_xticks()).lat)
+                    ax2.set_xticklabels(xtick_vals2.values.round(1))
+
+                if axs_in is None: 
+                    ax[cik] = axs
+                elif isinstance(axs_in,list): 
+                    axs_in[cik]=axs
+                else:
+                    axs_in=axs
                 
                 cik = cik +1
+            rik = rik+1
 
         
-    #return ax
+    if axs_in: return axs_in
+    else:   return ax
     
+def label_axes(fig, labels=None, loc=None, **kwargs):
+    """
+    rpn: copied on 25.9.2010 from: https://gist.github.com/tacaswell/9643166
+    
+    Walks through axes and labels each.
+
+    kwargs are collected and passed to `annotate`
+
+    Parameters
+    ----------
+    fig : Figure
+         Figure object to work on
+
+    labels : iterable or None
+        iterable of strings to use to label the axes.
+        If None, lower case letters are used.
+
+    loc : len=2 tuple of floats
+        Where to put the label in axes-fraction units
+    """
+    if labels is None:
+        labels = string.ascii_lowercase
+        
+    # re-use labels rather than stop labeling
+    labels = cycle(labels)
+    if loc is None:
+        loc = (.9, .9)
+    for ax, lab in zip(fig.axes, labels):
+        ax.annotate(lab, xy=loc,
+                    xycoords='axes fraction',
+                    **kwargs)
+
 def plot_map_view(sadcp=None, ctd_data=None, glider_track=None, ladcp_data=None, scanfish_data=None, scan_sadcp=None, ctd_ladcp=None,
-                              topo=None,sst_map=None,sst_map1=None,ssh_name='sst',x_lim=[0,180]):
+                  topo=None,sst_map=None,sst_map1=None,ssh_name='sst',x_lim=[0,180],axs=None,greyscale_cmap=False,ssh_vel=True,y_axis_label_off=False,
+                  projection = None):
     
-    from mpl_toolkits.basemap import Basemap
+    #from mpl_toolkits.basemap import Basemap
     import numpy as np
     import matplotlib.pyplot as plt
     import matplotlib.cbook
     from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-    from oceans.datasets import etopo_subset
-    from oceans.sw_extras import gamma_GP_from_SP_pt
+#     from oceans.datasets import etopo_subset
+#     from oceans.sw_extras import gamma_GP_from_SP_pt
     from matplotlib.patches import Polygon
     import gsw
     from matplotlib import animation, rc
     from IPython.display import HTML
     import pandas as pd
+    import cartopy.crs as ccrs
+    from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
+    from cartopy.io.img_tiles import Stamen
+    import cartopy.feature as cfeature
 
     # Stations map.
 
-    fig, ax = plt.subplots(ncols = 2, sharey=True, figsize=(15,8))
-    sst_range = np.array((15,19))
+    if projection is None: projection =  ccrs.PlateCarree()
+    if axs is None:
+        fig, axs = plt.subplots(ncols = 2, sharey=True, figsize=(15,8),subplot_kw=dict(projection=projection))
+        num_subplots = range(2)
+    else:
+        num_subplots = range(1)
+    sst_range = np.array((14,20))
     ssh_range = np.array((0.25,0.4))
     Ro_range = np.array((-0.4,0.4))
-    lat_1, lat_2, lon_0, lat_0 =-25.,-27.5,10,-27.5,
-    lat_1, lat_2, lon_0, lat_0 =-25.,-27.5,13,-26,
-
-    for si in np.array((0,1)): 
+    Ro_range = np.array((-0.15,0.15))
+    lon_0, lat_0, bwidth, bheight =13,-26,450000,300000
+    if isinstance(scan_sadcp, dict):
+        lon_0, lat_0, bwidth, bheight =12.5,-27,550000,500000
+    if axs is not None:
+        lon_0, lat_0, bwidth, bheight =axs[3], axs[4], axs[1], axs[2]
+    print(bwidth,bheight)    
+    
+    for si in num_subplots: 
         # setup map
-        m = Basemap(width=450000,height=300000,resolution='i',projection='aea',lon_0=lon_0,lat_0=lat_0)
-        m.ax = ax[si]
-        m.drawcoastlines(), m.fillcontinents(color='0.85')
-        m.drawparallels(np.arange(-90.,91.,1.),labels=[True,False,False,False],dashes=[2,2]), m.drawmeridians(np.arange(-180.,181.,1.),labels=[False,False,False,True],dashes=[2,2])
+#         m = Basemap(width=bwidth,height=bheight,resolution='i',projection='aea',lon_0=lon_0,lat_0=lat_0)
+        if axs is not None:
+            ax = axs[0]
+        else:
+            ax = axs[si] 
+            
+#         m.drawcoastlines(), m.fillcontinents(color='0.85')
+        
+        # Define the coordinate system of the data we have from Natural Earth and
+        # acquire the 1:10m physical coastline shapefile.
+#         geodetic = projection #ccrs.PlateCarree(globe=ccrs.Globe(datum='WGS84'))
+#         dataset = cfeature.NaturalEarthFeature(category='physical',
+#                                                name='coastline',
+#                                                scale='10m')
+        # Create a Stamen map tiler instance, and use its CRS for the GeoAxes.
+#         tiler = Stamen('terrain-background')
 
-        # add contour lines of bathymetry
-        lon2, lat2 = np.meshgrid(topo.lon.values,topo.lat.values)
-        #m.contourf(lon2, lat2,topo.Band1,40,cmap=plt.cm.Blues_r,latlon=True)
-        m.contour(lon2, lat2,topo.Band1,5,linestyles='solid',linewidths=1.,colors='0.35',latlon=True)
+#         ax = plt.axes(projection = tiler.crs)
+        
+        # Add the Stamen aerial imagery at zoom level 7.
+#         ax.add_image(tiler, 7)
+#         ax.add_feature(cfeature.LAND, scale='10m',zorder=100, edgecolor='k')
+        # add land and coastline
+        dataset = cfeature.NaturalEarthFeature(category='physical',
+                                               name='land',
+                                               scale='10m')
+        ax.add_feature(dataset, zorder=100, edgecolor='k', facecolor = 'w')
 
-        if si == 0:
+        
+        # setup ticks
+        ax.set_xticks([8,9,10,11,12,13,14,15,16,17], crs=projection)
+        ax.set_yticks([-22, -23, -24, -25, -26, -27, -28, -29], crs=projection)
+        lon_formatter = LongitudeFormatter(number_format='.0f',
+                                           dateline_direction_label=True)
+        lat_formatter = LatitudeFormatter(number_format='.0f')
+        ax.xaxis.set_major_formatter(lon_formatter)
+        ax.yaxis.set_major_formatter(lat_formatter)
+
+        # # Create an inset GeoAxes showing the location of the Solomon Islands.
+        # sub_ax = fig.add_axes([0.7, 0.625, 0.2, 0.2],
+        #                       projection=projection)
+        # sub_ax.set_extent([110, 180, -50, 10], projection)
+
+        # # Make a nice border around the inset axes.
+        # effect = Stroke(linewidth=4, foreground='wheat', alpha=0.5)
+        # sub_ax.outline_patch.set_path_effects([effect])
+
+        # Add the land, coastlines 
+        # sub_ax.add_feature(cfeature.LAND)
+        # sub_ax.coastlines()
+        # extent_box = sgeom.box(extent[0], extent[2], extent[1], extent[3])
+        # sub_ax.add_geometries([extent_box], projection, facecolor='none',
+        #                       edgecolor='blue', linewidth=2)
+
+
+#         ax = plt.axes(projection = ccrs.Mercator())
+#         ax.coastlines()
+#         ax.stock_img()
+#         ax.set_extent((9,16,-23.75,-28.25)) # (x0, x1, y0, y1)  
+#         # setup ticks
+#         ax.set_xticks([8,9,10,11,12,13,14,15,16,17], crs=projection)
+#         ax.set_yticks(np.arange(-22,-30,1), crs=projection)
+#         lon_formatter = LongitudeFormatter(number_format='.1f',
+#                                            degree_symbol='',
+#                                            dateline_direction_label=True)
+#         lat_formatter = LatitudeFormatter(number_format='.1f',
+#                                           degree_symbol='')
+#         ax.xaxis.set_major_formatter(lon_formatter)
+#         ax.yaxis.set_major_formatter(lat_formatter)
+        
+        
+#         if y_axis_label_off: # labels = [left,right,top,bottom]
+#             ax.drawparallels(np.arange(-90.,91.,1.),labels=[False,False,False,False],dashes=[2,2]), ax.drawmeridians(np.arange(-180.,181.,1.),labels=[False,False,False,True],dashes=[2,2])
+#         else:
+#             ax.drawparallels(np.arange(-90.,91.,1.),labels=[True,False,False,False],dashes=[2,2]), ax.drawmeridians(np.arange(-180.,181.,1.),labels=[False,False,False,True],dashes=[2,2])
+
+        if topo:
+            # add contour lines of bathymetry
+            lon2, lat2 = np.meshgrid(topo.lon.values,topo.lat.values)
+            #ax.contourf(lon2, lat2,topo.Band1,40,cmap=plt.cax.Blues_r )
+            ax.contour(lon2, lat2,topo.Band1,5,linestyles='solid',linewidths=1.,colors='0.35', transform=projection)
+
+        if si == 0 and sst_map is not None:
             # === SST MAP ===
             lon2, lat2 = np.meshgrid(sst_map.lon.values,sst_map.lat.values)
-            #m.contourf(lon2, lat2, sst_map.analysed_sst[0,:,:],40,cmap=plt.cm.coolwarm,latlon=True)
-            sst_plt = m.pcolormesh(lon2, lat2, sst_map.sst,vmin=sst_range[0],vmax=sst_range[1],cmap=plt.cm.coolwarm,latlon=True)
-            plt.text(1,1,sst_map.time_coverage_start[:-8],transform=m.ax.transAxes,horizontalalignment='right',verticalalignment='bottom')        
+            #ax.contourf(lon2, lat2, sst_map.analysed_sst[0,:,:],40,cmap=plt.cm.coolwarm )
+            if greyscale_cmap=='cool':
+                sst_plt = ax.pcolormesh(lon2, lat2, sst_map.sst,vmin=sst_range[0],vmax=sst_range[1],cmap=plt.cm.cool, transform=projection )
+            elif greyscale_cmap=='coolwarm_cbar':
+                sst_plt = ax.pcolormesh(lon2, lat2, sst_map.sst,vmin=sst_range[0],vmax=sst_range[1],cmap=plt.cm.coolwarm, transform=projection ,rasterized=True)
+                plt.colorbar(sst_plt,ax=ax,shrink=.5)
+            elif greyscale_cmap=='cividis':
+                sst_plt = ax.pcolormesh(lon2, lat2, sst_map.sst,vmin=sst_range[0],vmax=sst_range[1],cmap=plt.cm.cividis, transform=projection )
+            elif greyscale_cmap=='Spectral':
+                sst_plt = ax.pcolormesh(lon2, lat2, sst_map.sst,vmin=sst_range[0],vmax=sst_range[1],cmap=plt.cm.Spectral, transform=projection )
+            elif greyscale_cmap=='LineContour':
+                sst_plt = ax.contour(lon2, lat2, sst_map.sst,levels=np.arange(15.,17.51,0.25),cmap=plt.cm.viridis, transform=projection )
+            elif greyscale_cmap:
+                sst_plt = ax.pcolormesh(lon2, lat2, sst_map.sst,vmin=sst_range[0],vmax=sst_range[1],cmap=plt.cm.binary, transform=projection )
+            else:
+                sst_plt = ax.pcolormesh(lon2, lat2, sst_map.sst,vmin=sst_range[0],vmax=sst_range[1],cmap=plt.cm.coolwarm, transform=projection )
+            plt.text(1,1,sst_map.time_coverage_start[:-14],transform= ax.transAxes,horizontalalignment='right',verticalalignment='bottom')        
         else:
             # === SSH MAP ===
-            #m.contourf(lon2, lat2, sst_map1.analysed_sst[0,:,:],40,cmap=plt.cm.coolwarm,latlon=True)
+            #m.contourf(lon2, lat2, sst_map1.analysed_sst[0,:,:],40,cmap=plt.cm.coolwarm )
             lon2, lat2 = np.meshgrid(sst_map1.lon_left.values,sst_map1.lat_left.values)
-            Ro_plt = m.pcolormesh(lon2, lat2, sst_map1.Ro,vmin=Ro_range[0],vmax=Ro_range[1],cmap=plt.cm.coolwarm,latlon=True)
+            if greyscale_cmap:
+                lon2, lat2 = np.meshgrid(sst_map1.lon.values,sst_map1.lat.values)
+                ssh_plt = ax.pcolormesh(lon2, lat2, sst_map1.adt,cmap=plt.cm.binary ,alpha=0.5, transform=projection)
+            else:
+                Ro_plt = ax.pcolormesh(lon2, lat2, sst_map1.Ro,vmin=Ro_range[0],vmax=Ro_range[1],cmap=plt.cm.coolwarm , transform=projection)
+#                 plt.colorbar(Ro_plt)
+                #plt.colorbar(Ro_plt, ax=m.ax)
             lon2, lat2 = np.meshgrid(sst_map1.lon.values,sst_map1.lat.values)
-            ssh_plt = m.contour(lon2, lat2, sst_map1.adt,5,linestyles='solid',linewidths=2.,colors='0.01',latlon=True)
+#             if not greyscale_cmap:
+#                 ssh_plt = ax.contour(lon2, lat2, sst_map1.adt,5,linestyles='solid',linewidths=2.,colors='0.01' , transform=projection)
             ssh_date = pd.Series(sst_map1.time.values)
             plt.text(1,1,(str(ssh_date[0].year)+'-'+str(ssh_date[0].month)+'-'+str(ssh_date[0].day)),
-                     transform=m.ax.transAxes,horizontalalignment='right',verticalalignment='bottom')        
+                     transform= ax.transAxes,horizontalalignment='right',verticalalignment='bottom')        
             # === SSH MAP ===
             #lon2, lat2 = np.meshgrid(ssh_map.lon.values,ssh_map.lat.values)
-            #ssh_plt = m.contour(lon2, lat2, ssh_map.sla[0,:,:],vmin=ssh_range[0],vmax=ssh_range[1],colors='0.5',latlon=True) # 
-            #plt.text(0,1,ssh_map.time_coverage_start[:-4],transform=m.ax.transAxes,horizontalalignment='left',verticalalignment='bottom')  
+            #ssh_plt = ax.contour(lon2, lat2, ssh_map.sla[0,:,:],vmin=ssh_range[0],vmax=ssh_range[1],colors='0.5' ) # 
+            #plt.text(0,1,ssh_map.time_coverage_start[:-4],transform= ax.transAxes,horizontalalignment='left',verticalalignment='bottom')  
             #if hasattr(sst_map1, 'ugos'):
             
             # add Geostrophic current vectors
-            gos_plt = m.quiver(lon2, lat2, sst_map1.ugos,sst_map1.vgos,latlon=True)#,scale=700)
-            # make quiver key.
-            qk = plt.quiverkey(gos_plt, 0.8, 0.8, 0.1, '0.1 m/s', labelpos='W')
+            if ssh_vel:
+                gos_plt = ax.quiver(lon2, lat2, sst_map1.ugos.values,sst_map1.vgos.values , transform=projection)#,scale=700)
+                # make quiver key.
+                qk = plt.quiverkey(gos_plt, 0.8, 0.8, 0.1, '0.1 m/s', labelpos='W', color='k')
 
 
         if sadcp is not None:
             # plot ship track from SADCP data
-            m.plot(sadcp.lon.values, sadcp.lat.values,'-',color='0.55', latlon=True)
+            ax.plot(sadcp.lon.values, sadcp.lat.values,'-',color='0.55', transform=projection)
 
         if ctd_data is not None:
             # plot ladcp/ctd stations
-            m.plot(ctd_data.lon.values, ctd_data.lat.values, 'ko', latlon=True)
-            #m.plot(ladcp_data.lon.values, ladcp_data.lat.values, 'b.', latlon=True)
+            ax.plot(ctd_data.lon.values, ctd_data.lat.values, 'ko', transform=projection)
+            #m.plot(ladcp_data.lon.values, ladcp_data.lat.values, 'b.')
 
         if glider_track is not None:
             # plot glider track
-            m.plot(glider_track[0,:].values, glider_track[1,:].values, color='#3cb371',lw=2, latlon=True)
+            ax.plot(glider_track[0,:].values, glider_track[1,:].values, color='#3cb371',lw=2, transform=projection)
 
         # plot sections that are used below
         if ctd_ladcp is not None:
-            for ri in range(len(ctd_ladcp)):
-                m.plot(ctd_ladcp[ri].lon.dropna('xy').values,ctd_ladcp[ri].lat.dropna('xy').values, '.', color= 'chartreuse', latlon=True)
+            if isinstance(ctd_ladcp, dict): # if OrderedDict
+                ind_in = ctd_ladcp
+            else:
+                ind_in = range(len(ctd_ladcp))  
+
+            rik = 1
+            for ri in ind_in:
+                ax.plot(ctd_ladcp[ri].lon.dropna('xy').values,ctd_ladcp[ri].lat.dropna('xy').values, '.', color= 'chartreuse', transform=projection)
                 if si == 0:
                     skip=1
-                    ladcp_plt = m.quiver(ctd_ladcp[ri].lon.dropna('xy')[::skip].values, ctd_ladcp[ri].lat.dropna('xy')[::skip].values, 
+                    ladcp_plt = ax.quiver(ctd_ladcp[ri].lon.dropna('xy')[::skip].values, ctd_ladcp[ri].lat.dropna('xy')[::skip].values, 
                                               ctd_ladcp[ri].u.sel(z=ctd_ladcp[ri].z[-5]).dropna('xy')[::skip].values,
-                                              ctd_ladcp[ri].v.sel(z=ctd_ladcp[ri].z[-5]).dropna('xy')[::skip].values,
-                                              latlon=True)
+                                              ctd_ladcp[ri].v.sel(z=ctd_ladcp[ri].z[-5]).dropna('xy')[::skip].values, transform=projection)
+                    if rik==1: time1 = ctd_ladcp[ri].time[0].values
                     # make quiver key.
-                    qk = plt.quiverkey(ladcp_plt, 0.9, 0.9, 0.1, '0.1 m/s', labelpos='W')
+                    qk = plt.quiverkey(ladcp_plt, 0.8, 0.8, 0.1, '0.1 m/s', labelpos='W', color='k', transform=projection)
+                rik = rik+1
             
-            start_end_date = pd.Series([ctd_ladcp[0].time[0].values,ctd_ladcp[-1].time[-1].values])
+            start_end_date = pd.Series([time1,ctd_ladcp[ri].time[-1].values])
         
         if scan_sadcp is not None:
-            for ri in range(len(scan_sadcp)):
-                m.plot(scan_sadcp[ri].lon.dropna('xy').values,scan_sadcp[ri].lat.dropna('xy').values, lw = 4, color= 'SlateGrey', latlon=True)
+            if isinstance(scan_sadcp, dict): # if OrderedDict
+                ind_in = scan_sadcp
+            elif 'TransectName' in scan_sadcp:
+                ind_in = range(len(scan_sadcp.TransectName))
+            else:
+                ind_in = range(len(scan_sadcp))  
+                 
+                
+            color_idx = np.linspace(0, 1, len(scan_sadcp)+1)
+            rik = 0
+            for ri in ind_in:
+                if 'TransectName' in scan_sadcp:
+                    ax.plot(scan_sadcp.isel(TransectName=ri).lon.values,scan_sadcp.isel(TransectName=ri).lat.values, lw = 4, color=plt.cm.tab10(rik/10), transform=projection)
+                else:
+                    ax.plot(scan_sadcp[ri].lon.dropna('xy').values,scan_sadcp[ri].lat.dropna('xy').values, lw = 4, color=plt.cm.tab10(rik/10), transform=projection)
                 
                 if si == 0:
                     skip=5
-                    sadcp_plt = m.quiver(scan_sadcp[ri].lon.dropna('xy')[::skip].values, scan_sadcp[ri].lat.dropna('xy')[::skip].values, 
-                                              scan_sadcp[ri].u.sel(z=scan_sadcp[ri].z[-5]).dropna('xy')[::skip].values,
-                                              scan_sadcp[ri].v.sel(z=scan_sadcp[ri].z[-5]).dropna('xy')[::skip].values,
-                                              latlon=True)
-                    # make quiver key.
-                    qk = plt.quiverkey(sadcp_plt, 0.9, 0.9, 0.1, '0.1 m/s', labelpos='W')
+                    z_ind = -40 # m depth
+                    if 'TransectName' in scan_sadcp:
+                        if rik==1: time1 = scan_sadcp.isel(TransectName=ri).time[0].values
+                    else:
+                        sadcp_plt = ax.quiver(scan_sadcp[ri].lon.dropna('xy')[::skip].values, scan_sadcp[ri].lat.dropna('xy')[::skip].values, 
+                                                  scan_sadcp[ri].u.sel(z=z_ind,method='nearest').dropna('xy')[::skip].values,
+                                                  scan_sadcp[ri].v.sel(z=z_ind,method='nearest').dropna('xy')[::skip].values,
+                                                  color=plt.cm.tab10(rik/10), transform=projection)
+                        if rik==1: time1 = scan_sadcp[ri].time[0].values
+                        
+                        # make quiver key.
+                        qk = plt.quiverkey(sadcp_plt, 0.8, 0.8, 0.1, '0.1 m/s', labelpos='W', color='k')
+                rik = rik+1
             
-            start_end_date = pd.Series([scan_sadcp[0].time[0].values,scan_sadcp[-1].time[-1].values])
+            if 'TransectName' in scan_sadcp:
+                start_end_date = pd.Series([time1,scan_sadcp.isel(TransectName=ri).time[-1].values])
+            elif len(ind_in)==1: # just one transect
+                start_end_date = pd.Series([scan_sadcp[ri].time[-1].values,scan_sadcp[ri].time[-1].values])
+            else:
+                start_end_date = pd.Series([time1,scan_sadcp[ri].time[-1].values])
+        #    start_end_date = pd.Series([scan_sadcp[0].time[0].values,scan_sadcp[-1].time[-1].values])
 
-        m.drawmapscale(14.5, -25.5, 15, -25.5, 50,barstyle='fancy')
+#         ax.drawmapscale(15, -24.2, 15.5, -24.2, 50,barstyle='fancy',)
             
         #if si == 0:
         #    plt.colorbar(sst_plt)#, ticks=[-0.5, 0, 0.5])
@@ -425,21 +891,104 @@ def plot_map_view(sadcp=None, ctd_data=None, glider_track=None, ladcp_data=None,
 
         if si == 0:
             # add inset showing globe
-            add_globalmap_inset(m)
+            #add_globalmap_inset(m)
             # date range of data being plotted            
             if scan_sadcp is not None or ctd_ladcp is not None:
-                plt.text(0,1,(str(start_end_date[0].year)+'-'+str(start_end_date[0].month)+'-'+str(start_end_date[0].day)+':'+str(start_end_date[1].month)+'-'+str(start_end_date[1].day)),
-                              transform=m.ax.transAxes,horizontalalignment='left',verticalalignment='bottom')        
+                plt.text(0,1,(str(start_end_date[0].year)+'-'+str(start_end_date[0].month)+'-'+str(start_end_date[0].day)+
+                              ':'+str(start_end_date[1].month)+'-'+str(start_end_date[1].day)),
+                              transform= ax.transAxes,horizontalalignment='left',verticalalignment='bottom')   
+                
+        if axs is not None:
+            extent = axs[1:]
+        else:
+            extent = [9,16,-23.75,-28.25]
+        # set axis limits
+        ax.set_extent(extent, projection)
+
+                
+    if axs is None:
+        return axs, fig
+    else:
+        return ax
+
+def quick_map(scan_sadcp,var1,var2,sst_map,lon_0,lat_0,bwidth,
+              bheight,z_ind,ax_in,reverse_flag=None,sst_range=None,scale_avg=None,
+              sla_flag=False,Ro_flag=False,Quiv_flag=True,man_scale_avg_size=None):
+    
+    from mpl_toolkits.basemap import Basemap
+    m = Basemap(width=bwidth,height=bheight,resolution='i',projection='aea',lon_0=lon_0,lat_0=lat_0)
+    m.ax = ax_in
+    if bwidth>5e5: 
+        m.drawcoastlines(), m.fillcontinents(color='0.85')
+    m.drawparallels(np.arange(-90.,91.,1.),labels=[True,False,False,False],dashes=[2,2])
+    m.drawmeridians(np.arange(-180.,181.,1.),labels=[False,False,False,True],dashes=[2,2])
+
+    # === SST/SLA MAP ===
+    if sla_flag:
+        lon2, lat2 = np.meshgrid(sst_map.lon.values,sst_map.lat.values)
+        sst_plt = m.contour(lon2, lat2, sst_map.adt, levels = sst_range, cmap=plt.cm.PiYG,latlon=True)
+    elif sst_map:
+        lon2, lat2 = np.meshgrid(sst_map.lon.values,sst_map.lat.values)
+        if sst_range is None: sst_range = np.arange(15.,17.51,0.25)       
+        #m.contourf(lon2, lat2, sst_map.analysed_sst[0,:,:],40,cmap=plt.cm.coolwarm,latlon=True)
+        #sst_plt = m.pcolormesh(lon2, lat2, sst_map.sst,vmin=sst_range[0],vmax=sst_range[1],cmap=plt.cm.coolwarm,latlon=True)
+        sst_plt = m.contour(lon2, lat2, sst_map.sst,levels = sst_range, cmap=plt.cm.viridis,latlon=True)
+    if sst_map:
+        cbar = m.colorbar(sst_plt,location='right',pad="5%")
+        if 'time_coverage_start' in sst_map.attrs:
+            plt.text(1,1,sst_map.time_coverage_start[:-8],transform=m.ax.transAxes,horizontalalignment='right',verticalalignment='bottom')        
+        else: 
+            plt.text(1,1,sst_map.time_from_filename,transform=m.ax.transAxes,horizontalalignment='right',verticalalignment='bottom')        
+    if Quiv_flag:
+        m.plot(scan_sadcp.lon.values,scan_sadcp.lat.values, lw = 2, latlon=True)
+    else:
+        m.plot(scan_sadcp.lon.values,scan_sadcp.lat.values, lw = 4, color='k', latlon=True)
         
+    if scale_avg is None and not Ro_flag and Quiv_flag:
+        plt.text(1,1,(var1 + ' & ' + var2),transform=m.ax.transAxes,horizontalalignment='right',verticalalignment='top')        
+        skip=2
+        if reverse_flag:
+            sadcp_plt = m.quiver(scan_sadcp.lon.dropna('xy')[::skip].values, scan_sadcp.lat.dropna('xy')[::skip].values, 
+                                      -1*scan_sadcp[var1].sel(z=z_ind,method='nearest').dropna('xy')[::skip].values,
+                                      -1*scan_sadcp[var2].sel(z=z_ind,method='nearest').dropna('xy')[::skip].values,
+                                      latlon=True)
+        else:
+            sadcp_plt = m.quiver(scan_sadcp.lon.dropna('xy')[::skip].values, scan_sadcp.lat.dropna('xy')[::skip].values, 
+                                      scan_sadcp[var1].sel(z=z_ind,method='nearest').dropna('xy')[::skip].values,
+                                      scan_sadcp[var2].sel(z=z_ind,method='nearest').dropna('xy')[::skip].values,
+                                      latlon=True)
+    elif scale_avg:
+        plt.text(1,1,('Scale average: '+str(scale_avg.ScaleAvRange[0])+'-'+str(scale_avg.ScaleAvRange[1])+' km'),transform=m.ax.transAxes,horizontalalignment='right',verticalalignment='top')
+        if bwidth>5e5: 
+            m.scatter(scan_sadcp.lon.values,scan_sadcp.lat.values,c=scale_avg.scale_avg.values, s=scale_avg.scale_avg.values*1e7, alpha=0.5, cmap='autumn', latlon=True)
+        elif man_scale_avg_size is not None:
+            m.scatter(scan_sadcp.lon.values,scan_sadcp.lat.values,c=scale_avg.scale_avg.values, s=man_scale_avg_size, alpha=0.5, cmap='viridis', latlon=True)
             
+        else:
+            m.scatter(scan_sadcp.lon.values,scan_sadcp.lat.values,c=scale_avg.scale_avg.values, s=scale_avg.scale_avg.values*1e7, alpha=0.5, cmap='viridis', latlon=True)
+
+    elif Ro_flag: # constant size because of -ve values
+        m.scatter(scan_sadcp.lon.values,scan_sadcp.lat.values,c=scan_sadcp[var1].values, s=Ro_flag, alpha=0.5, cmap='viridis', latlon=True)
+        plt.text(0.01,1,var1,transform=m.ax.transAxes,horizontalalignment='left', verticalalignment='bottom')
+        plt.text(0.01,0.90,'30 km wide front, 40 m deep layer, z=-30 m = Ro: %f ' %scan_sadcp['Ro_est'].values,
+                transform=m.ax.transAxes,horizontalalignment='left', verticalalignment='top')
+    
+    start_end_date = pd.Series([scan_sadcp.time[0].values,scan_sadcp.time[-1].values])
+    plt.text(0,0,(str(start_end_date[0].year)+'-'+str(start_end_date[0].month)+'-'+str(start_end_date[0].day)+':'+str(start_end_date[1].month)+'-'+str(start_end_date[1].day)),
+                  transform=m.ax.transAxes,horizontalalignment='left',verticalalignment='bottom')        
+
+    #m.drawmapscale(14.5, -25.5, 15, -25.5, 50,barstyle='fancy')
+    return m
+
+
 def make_movie_ship_tracks(topo,sadcp,ladcp_data):
     from mpl_toolkits.basemap import Basemap
     import numpy as np
     import matplotlib.pyplot as plt
     import matplotlib.cbook
     from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-    from oceans.datasets import etopo_subset
-    from oceans.sw_extras import gamma_GP_from_SP_pt
+#     from oceans.datasets import etopo_subset
+#     from oceans.sw_extras import gamma_GP_from_SP_pt
     from matplotlib.patches import Polygon
     import gsw
     from matplotlib import animation, rc

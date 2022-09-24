@@ -23,6 +23,8 @@ def import_gos_sla_adt_data(year='2016',month='12',days=['01','02','03','04','05
     """ import Absolute geostrophic velocity calculated from sea level height
     source: https://cds.climate.copernicus.eu
     NOTE: doesn't work well with only 1 day, try at least 2 days
+    Code based on choosing data on https://cds.climate.copernicus.eu/cdsapp#!/search?type=dataset 
+    and then selecting "Show API Request"
     """
     import cdsapi
     c = cdsapi.Client()
@@ -34,6 +36,25 @@ def import_gos_sla_adt_data(year='2016',month='12',days=['01','02','03','04','05
     #    {'variable':'all', 'year':'2016', 'month':'11', 
     #     'day':['17','18','19','20','21','22','23','24','25','27','28','29','30'],'format':'tgz'},
     #    '/Users/North/Drive/Work/UniH_Work/DataAnalysis/Data/MET_132/Remote_Sensing/201611_dataset-satellite-sea-level-global.tar.gz')
+
+
+def import_sst_avhrr_data(year='2016',month='12',days=['01','02','03','04','05'],sensor='NOAA'): 
+    # code based on choosing data on https://cds.climate.copernicus.eu/cdsapp#!/search?type=dataset 
+    # and then selecting "Show API Request"
+    import cdsapi
+    if sensor=='NOAA': sensor_in = 'avhrr_on_noaa_19'
+    if sensor=='METOP': sensor_in = 'avhrr_on_metop_a'
+        
+    filename = str(year)+str(month)+'_dataset-satellite-sst-global.tar.gz'
+    c = cdsapi.Client()
+    c.retrieve('satellite-sea-surface-temperature',
+        {'processinglevel': 'level_3c',
+         'sensor_on_satellite': sensor_in,
+         'version': '2_0',
+         'variable': 'all',
+         'year':year, 'month':month, 
+         'day':days,'format':'tgz'}, '/Users/North/Drive/Work/UniH_Work/DataAnalysis/Data/MET_132/Remote_Sensing/downloaded_sst_nc_file_on_17.02.2021/AVHRR/'+filename)
+
 
 def dll_dist(dlon, dlat, lon, lat):
     """Converts lat/lon differentials into distances in meters
@@ -100,6 +121,9 @@ def load_gos_data(gos_filenames):
     # Vorticity Rossby Number = ζ / f
     ds_full['Ro'] = ds_full.Rel_Vort/coriolis(ds_full.Rel_Vort.lat_left)
 
+    ds_full.coords['lon_left_180'] = np.append(np.arange(0.,180,0.25),np.arange(-180.,0.,0.25))
+    ds_full.coords['lon_180'] = np.append(np.arange(0.125,180,0.25),np.arange(-180.,0.,0.25)) 
+    
     return ds_full
 
 
